@@ -69,18 +69,11 @@ typedef int            FcBool;
  * it means multiple copies of the font information.
  */
 
-#define FC_CACHE_VERSION_NUMBER		@CACHE_VERSION@
-#define FC_CACHE_SNAP_VERSION_NUMBER	@CACHE_SNAP_VERSION@
-#define FC_NEXT_CACHE_VERSION_NUMBER	@NEXT_CACHE_VERSION@
-#define FC_CACHE_MIN_COMPAT_VERSION	@CACHE_MIN_COMPAT_VERSION@
+#define FC_CACHE_VERSION_NUMBER @CACHE_VERSION@
 
-#define _FC_STRINGIFY_(s)            #s
-#define _FC_STRINGIFY(s)             _FC_STRINGIFY_ (s)
-#if FC_NEXT_CACHE_VERSION_NUMBER > 0
-#  define FC_CACHE_VERSION _FC_STRINGIFY (FC_NEXT_CACHE_VERSION_NUMBER) "~snap" _FC_STRINGIFY (FC_CACHE_SNAP_VERSION_NUMBER)
-#else
-#  define FC_CACHE_VERSION _FC_STRINGIFY (FC_CACHE_VERSION_NUMBER)
-#endif
+#define _FC_STRINGIFY_(s)       #s
+#define _FC_STRINGIFY(s)        _FC_STRINGIFY_ (s)
+#define FC_CACHE_VERSION        _FC_STRINGIFY (FC_CACHE_VERSION_NUMBER)
 
 #define FcFalse                 0
 #define FcTrue                  1
@@ -143,9 +136,9 @@ typedef int            FcBool;
 #define FC_FONT_WRAPPER         "fontwrapper"    /* String */
 #define FC_GENERIC_FAMILY       "genericfamily"  /* Integer */
 
-#define FC_CACHE_SUFFIX         ".cache-" FC_CACHE_VERSION
-#define FC_DIR_CACHE_FILE       "fonts.cache-" FC_CACHE_VERSION
-#define FC_USER_CACHE_FILE      ".fonts.cache-" FC_CACHE_VERSION
+#define FC_CACHE_SUFFIX         ".fccache"
+#define FC_DIR_CACHE_FILE       "fonts.fccache"
+#define FC_USER_CACHE_FILE      ".fonts.fccache"
 
 /* Adjust outline rasterizer */
 #define FC_CHARWIDTH            "charwidth" /* Int */

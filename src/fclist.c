@@ -199,12 +199,14 @@ FcBool
 FcListPatternMatchAny (const FcPattern *p,
                        const FcPattern *font)
 {
-    int i;
+    int      i;
+    uint16_t stride;
 
     if (!p)
 	return FcFalse;
+    stride = FcPatternEltStride (p);
     for (i = 0; i < p->num; i++) {
-	FcPatternElt *pe = &FcPatternElts (p)[i];
+	FcPatternElt *pe = FcPatternEltIndex (FcPatternElts (p), i, stride);
 	FcPatternElt *fe;
 
 	if (pe->object == FC_NAMELANG_OBJECT) {

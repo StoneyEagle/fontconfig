@@ -119,7 +119,6 @@ if pytest.found()
         (not get_option('tests-bwrap').allowed()).to_int(),
       ),
       'FC_CACHE_VERSION=@0@'.format(cacheversion),
-      'FC_CACHE_SNAP_VERSION=@0@'.format(cachesnapversion),
     ],
     protocol: 'tap',
     timeout: 600,

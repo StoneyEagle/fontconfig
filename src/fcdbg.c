@@ -253,6 +253,7 @@ FcPatternPrint2File (FILE              *stream,
     int           i, j, k, pos;
     FcPatternElt *e1, *e2;
     FcPattern    *p1, *p2;
+    uint16_t      stride1, stride2;
 
     if (os) {
 	p1 = FcPatternFilter (pp1, os);
@@ -261,16 +262,19 @@ FcPatternPrint2File (FILE              *stream,
 	p1 = pp1;
 	p2 = pp2;
     }
+    stride1 = FcPatternEltStride (p1);
+    stride2 = FcPatternEltStride (p2);
+
     fprintf (stream, "Pattern has %d elts (size %d), %d elts (size %d)\n",
              p1->num, p1->size, p2->num, p2->size);
     for (i = 0, j = 0; i < p1->num; i++) {
-	e1 = &FcPatternElts (p1)[i];
-	e2 = &FcPatternElts (p2)[j];
+	e1 = FcPatternEltIndex (FcPatternElts (p1), i, stride1);
+	e2 = FcPatternEltIndex (FcPatternElts (p2), j, stride2);
 	if (!e2 || e1->object != e2->object) {
 	    pos = FcPatternPosition (p2, FcObjectName (e1->object));
 	    if (pos >= 0) {
 		for (k = j; k < pos; k++) {
-		    e2 = &FcPatternElts (p2)[k];
+		    e2 = FcPatternEltIndex (FcPatternElts (p2), k, stride2);
 		    fprintf (stream, "\t%s: (None) -> ", FcObjectName (e2->object));
 		    FcValueListPrintFile (stream, FcPatternEltValues (e2));
 		    fprintf (stream, "\n");
@@ -287,7 +291,7 @@ FcPatternPrint2File (FILE              *stream,
 	    fprintf (stream, "\t%s:", FcObjectName (e1->object));
 	    FcValueListPrintFile (stream, FcPatternEltValues (e1));
 	    fprintf (stream, " -> ");
-	    e2 = &FcPatternElts (p2)[j];
+	    e2 = FcPatternEltIndex (FcPatternElts (p2), j, stride2);
 	    FcValueListPrintFile (stream, FcPatternEltValues (e2));
 	    fprintf (stream, "\n");
 	    j++;
@@ -295,7 +299,7 @@ FcPatternPrint2File (FILE              *stream,
     }
     if (j < p2->num) {
 	for (k = j; k < p2->num; k++) {
-	    e2 = &FcPatternElts (p2)[k];
+	    e2 = FcPatternEltIndex (FcPatternElts (p2), k, stride2);
 	    if (FcObjectName (e2->object)) {
 		fprintf (stream, "\t%s: (None) -> ", FcObjectName (e2->object));
 		FcValueListPrintFile (stream, FcPatternEltValues (e2));

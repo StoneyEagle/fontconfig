@@ -628,7 +628,9 @@ FcCompare (FcPattern     *pat,
            FcResult      *result,
            FcCompareData *data)
 {
-    int i, i1, i2;
+    int      i, i1, i2;
+    uint16_t pat_stride = FcPatternEltStride (pat);
+    uint16_t fnt_stride = FcPatternEltStride (fnt);
 
     for (i = 0; i < PRI_END; i++)
 	value[i] = 0.0;
@@ -636,8 +638,8 @@ FcCompare (FcPattern     *pat,
     i1 = 0;
     i2 = 0;
     while (i1 < pat->num && i2 < fnt->num) {
-	FcPatternElt *elt_i1 = &FcPatternElts (pat)[i1];
-	FcPatternElt *elt_i2 = &FcPatternElts (fnt)[i2];
+	FcPatternElt *elt_i1 = FcPatternEltIndex (FcPatternElts (pat), i1, pat_stride);
+	FcPatternElt *elt_i2 = FcPatternEltIndex (FcPatternElts (fnt), i2, fnt_stride);
 
 	i = FcObjectCompare (elt_i1->object, elt_i2->object);
 	if (i > 0)
@@ -678,6 +680,7 @@ FcFontRenderPrepare (FcConfig  *config,
     FcResult      result;
     FcBool        variable = FcFalse;
     FcStrBuf      variations;
+    uint16_t      font_stride, pat_stride;
 
     assert (pat != NULL);
     assert (font != NULL);
@@ -690,8 +693,10 @@ FcFontRenderPrepare (FcConfig  *config,
     newp = FcPatternCreate();
     if (!newp)
 	return NULL;
+    font_stride = FcPatternEltStride (font);
+    pat_stride = FcPatternEltStride (pat);
     for (i = 0; i < font->num; i++) {
-	fe = &FcPatternElts (font)[i];
+	fe = FcPatternEltIndex (FcPatternElts (font), i, font_stride);
 	if (fe->object == FC_FAMILYLANG_OBJECT ||
 	    fe->object == FC_STYLELANG_OBJECT ||
 	    fe->object == FC_FULLNAMELANG_OBJECT) {
@@ -816,7 +821,7 @@ FcFontRenderPrepare (FcConfig  *config,
 	}
     }
     for (i = 0; i < pat->num; i++) {
-	pe = &FcPatternElts (pat)[i];
+	pe = FcPatternEltIndex (FcPatternElts (pat), i, pat_stride);
 	fe = FcPatternObjectFindElt (font, pe->object);
 	if (!fe &&
 	    pe->object != FC_FAMILYLANG_OBJECT &&
@@ -906,14 +911,17 @@ FcFontSetMatchInternal (FcFontSet **sets,
 
     /* Update the binding according to the score to indicate how exactly values matches on. */
     if (best) {
+	uint16_t best_stride = FcPatternEltStride (best);
+
 	pat = FcPatternCreate();
 	elt = FcPatternElts (best);
 	for (i = 0; i < FcPatternObjectCount (best); i++) {
-	    const FcMatcher *match = FcObjectToMatcher (elt[i].object, FcFalse);
-	    FcValueListPtr   l = FcPatternEltValues (&elt[i]);
+	    FcPatternElt    *e = FcPatternEltIndex ((FcPatternElt *)elt, i, best_stride);
+	    const FcMatcher *match = FcObjectToMatcher (e->object, FcFalse);
+	    FcValueListPtr   l = FcPatternEltValues (e);
 
 	    if (!match)
-		FcPatternObjectListAdd (pat, elt[i].object,
+		FcPatternObjectListAdd (pat, e->object,
 		                        FcValueListDuplicate (l), FcTrue);
 	    else {
 		FcValueBinding binding = FcValueBindingWeak;
@@ -936,7 +944,7 @@ FcFontSetMatchInternal (FcFontSet **sets,
 		    t->binding = binding;
 		    t->next = NULL;
 		}
-		FcPatternObjectListAdd (pat, elt[i].object, newp, FcTrue);
+		FcPatternObjectListAdd (pat, e->object, newp, FcTrue);
 	    }
 	}
     }

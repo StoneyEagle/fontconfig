@@ -13,8 +13,9 @@ data path.  The test compares fc-list output between current and
 baseline: any difference in font properties indicates the baseline
 is misinterpreting the cache data.
 
-Discovery tests (xfail) check whether filename suffix differences
-(.cache-9 vs .cache-12) are handled without renaming.
+Discovery tests verify that:
+- new fontconfig finds old .cache-N files via fallback probing
+- old fontconfig finds new .fccache files via compat symlinks
 
 Requires FC_BASELINE_BUILDDIR (pre-built baseline) or FC_BASELINE_TAG
 (git tag to build from).  Skips if neither is set.
@@ -145,6 +146,8 @@ def fcfont():
 
 
 def _cache_suffix(version):
+    if version >= 13:
+        return ".fccache"
     return f".cache-{version}"
 
 
@@ -281,15 +284,10 @@ def test_discovery_backward_compat(
     baseline_builddir, baseline_cache_version, current_cache_version,
     fctest, fcfont,
 ):
-    """Old cache must be discoverable by new fc-list without renaming."""
-    old_cv = baseline_cache_version
-    new_cv = current_cache_version
-    if old_cv != new_cv:
-        pytest.xfail(
-            f"Discovery mismatch: baseline .cache-{old_cv} vs "
-            f"current .cache-{new_cv}"
-        )
+    """Old cache must be discoverable by new fc-list without renaming.
 
+    New fontconfig finds old .cache-N files via fallback probing.
+    """
     baseline = _setup_and_share(fctest, fcfont, baseline_builddir)
     cachedir = fctest.cachedir.name
 

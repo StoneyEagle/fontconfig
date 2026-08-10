@@ -463,7 +463,20 @@ struct _FcCache {
     uint32_t     checksum_hi;   /* upper 32 bits of st_mtime */
     int64_t      checksum_nano; /* checksum of directory state */
     int64_t      fc_version;    /* fontconfig version */
+    /* stride fields (v13+): sizeof each struct at write time */
+    uint16_t     stride_pattern;
+    uint16_t     stride_pattern_elt;
+    uint16_t     stride_value_list;
+    uint16_t     stride_value;
+    uint16_t     stride_charset;
+    uint16_t     stride_langset;
+    uint16_t     stride_fontset;
+    uint16_t     stride_reserved[5];
+    uint64_t     reserved[4];
 };
+
+#define FC_CACHE_HEADER_SIZE_V12 (0x28 + 4 * SIZEOF_VOID_P)
+#define FC_CACHE_MIN_COMPAT_VERSION 9
 
 #undef FcCacheDir
 #undef FcCacheSubdir
@@ -473,6 +486,23 @@ struct _FcCache {
 #define FcCacheSubdir(c, i) FcOffsetToPtr (FcCacheDirs (c),    \
                                            FcCacheDirs (c)[i], \
                                            FcChar8)
+
+static inline uint16_t
+FcCacheStridePatternElt (const FcCache *cache)
+{
+    if (cache->version >= 13 && cache->stride_pattern_elt != 0)
+        return cache->stride_pattern_elt;
+    return (uint16_t)sizeof (FcPatternElt);
+}
+
+static inline FcPatternElt *
+FcPatternEltIndex (FcPatternElt *base, int i, uint16_t stride)
+{
+    return (FcPatternElt *)((char *)base + (size_t)i * stride);
+}
+
+FcPrivate uint16_t
+FcPatternEltStride (const FcPattern *pat);
 
 /*
  * Used while constructing a directory cache object
