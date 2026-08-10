@@ -50,7 +50,8 @@ FC_ASSERT_STATIC (0x08 + 1 * FC_MAX (SIZEOF_VOID_P, ALIGNOF_DOUBLE) == sizeof (F
 FC_ASSERT_STATIC (0x00 + 2 * SIZEOF_VOID_P == sizeof (FcPatternElt));
 FC_ASSERT_STATIC (0x08 + 2 * SIZEOF_VOID_P == sizeof (FcPattern));
 FC_ASSERT_STATIC (0x08 + 2 * SIZEOF_VOID_P == sizeof (FcCharSet));
-FC_ASSERT_STATIC (0x28 + 4 * SIZEOF_VOID_P == sizeof (FcCache));
+/* v12 header + v13 extension: 12 stride uint16_t (7 named + 5 reserved) + 4 reserved uint64_t */
+FC_ASSERT_STATIC (FC_CACHE_HEADER_SIZE_V12 + 12 * sizeof (uint16_t) + 4 * sizeof (uint64_t) == sizeof (FcCache));
 
 int
 main (int argc FC_UNUSED, char **argv FC_UNUSED)

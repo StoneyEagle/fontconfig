@@ -356,7 +356,7 @@ FcPatternGetCacheObject (FcPattern *p)
     /* We use a value to find the cache, instead of the FcPattern object
      * because the pattern itself may be a cache allocation if we rewrote the path,
      * so the p may not be in the cached region. */
-    return FcPatternEltValues (&FcPatternElts (p)[0]);
+    return FcPatternEltValues (FcPatternEltIndex (FcPatternElts (p), 0, FcPatternEltStride (p)));
 }
 
 FcPattern *
@@ -365,6 +365,7 @@ FcPatternCacheRewriteFile (const FcPattern *p,
                            const FcChar8   *relocated_font_file)
 {
     FcPatternElt *elts = FcPatternElts (p);
+    uint16_t      stride = FcPatternEltStride (p);
     size_t        i, j;
     FcChar8      *data;
     FcPattern    *new_p;
@@ -395,7 +396,7 @@ FcPatternCacheRewriteFile (const FcPattern *p,
 
     /* Copy all but the FILE values from the cache */
     for (i = 0, j = 0; i < p->num; i++) {
-	FcPatternElt *elt = &elts[i];
+	FcPatternElt *elt = FcPatternEltIndex (elts, i, stride);
 	new_elts[j].object = elt->object;
 	if (elt->object != FC_FILE_OBJECT)
 	    new_elts[j++].values = FcPatternEltValues (elt);
@@ -453,6 +454,7 @@ FcPatternObjectPosition (const FcPattern *p, FcObject object)
 {
     int           low, high, mid, c;
     FcPatternElt *elts = FcPatternElts (p);
+    uint16_t      stride = FcPatternEltStride (p);
 
     low = 0;
     high = FcPatternObjectCount (p) - 1;
@@ -460,7 +462,7 @@ FcPatternObjectPosition (const FcPattern *p, FcObject object)
     mid = 0;
     while (low <= high) {
 	mid = (low + high) >> 1;
-	c = elts[mid].object - object;
+	c = FcPatternEltIndex (elts, mid, stride)->object - object;
 	if (c == 0)
 	    return mid;
 	if (c < 0)
@@ -485,7 +487,7 @@ FcPatternObjectFindElt (const FcPattern *p, FcObject object)
     int i = FcPatternObjectPosition (p, object);
     if (i < 0)
 	return 0;
-    return &FcPatternElts (p)[i];
+    return FcPatternEltIndex (FcPatternElts (p), i, FcPatternEltStride (p));
 }
 
 FcPatternElt *
@@ -571,11 +573,13 @@ FcPatternHash (const FcPattern *p)
     int           i;
     FcChar32      h = 0;
     FcPatternElt *pe = FcPatternElts (p);
+    uint16_t      stride = FcPatternEltStride (p);
 
     for (i = 0; i < FcPatternObjectCount (p); i++) {
+	FcPatternElt *e = FcPatternEltIndex (pe, i, stride);
 	h = (((h << 1) | (h >> 31)) ^
-	     pe[i].object ^
-	     FcValueListHash (FcPatternEltValues (&pe[i])));
+	     e->object ^
+	     FcValueListHash (FcPatternEltValues (e)));
     }
     return h;
 }
@@ -1286,7 +1290,7 @@ typedef struct _FcPatternPrivateIter {
 static void
 FcPatternIterSet (const FcPattern *pat, FcPatternPrivateIter *iter)
 {
-    iter->elt = FcPatternObjectCount (pat) > 0 && iter->pos < FcPatternObjectCount (pat) ? &FcPatternElts (pat)[iter->pos] : NULL;
+    iter->elt = FcPatternObjectCount (pat) > 0 && iter->pos < FcPatternObjectCount (pat) ? FcPatternEltIndex (FcPatternElts (pat), iter->pos, FcPatternEltStride (pat)) : NULL;
 }
 
 void

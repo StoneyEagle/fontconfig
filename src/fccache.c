@@ -121,7 +121,7 @@ FcDirCacheReplaceVersion (const FcChar8 *cache_base,
                           FcChar8        compat_base[CACHEBASE_LEN],
                           int            version)
 {
-    const char *suffix = strstr ((const char *)cache_base, ".cache-");
+    const char *suffix = strstr ((const char *)cache_base, ".fccache");
     size_t      prefix_len;
 
     if (!suffix)
@@ -437,6 +437,44 @@ FcDirCacheProcess (FcConfig *config, const FcChar8 *dir,
 #endif
 	else
 	    FcStrFree (cache_hashed);
+
+	if (fd < 0) {
+	    int v;
+
+	    for (v = 12; v >= 9; v--) {
+		FcChar8 old_cache_base[CACHEBASE_LEN];
+		FcChar8 *old_cache_hashed;
+
+		FcDirCacheBasenameMD5 (config, dir, old_cache_base);
+		{
+		    char *dot = strrchr ((char *)old_cache_base, '.');
+		    if (dot)
+			sprintf (dot, ".cache-%d", v);
+		}
+		if (sysroot)
+		    old_cache_hashed = FcStrBuildFilename (sysroot, cache_dir, old_cache_base, NULL);
+		else
+		    old_cache_hashed = FcStrBuildFilename (cache_dir, old_cache_base, NULL);
+		if (!old_cache_hashed)
+		    break;
+		fd = FcDirCacheOpenFile (old_cache_hashed, &file_stat);
+		if (fd >= 0) {
+		    ret = (*callback) (config, fd, &file_stat, &dir_stat, &latest_mtime, closure);
+		    close (fd);
+		    if (ret) {
+			if (cache_file_ret) {
+			    if (*cache_file_ret)
+				FcStrFree (*cache_file_ret);
+			    *cache_file_ret = old_cache_hashed;
+			} else
+			    FcStrFree (old_cache_hashed);
+		    } else
+			FcStrFree (old_cache_hashed);
+		    break;
+		}
+		FcStrFree (old_cache_hashed);
+	    }
+	}
     }
     FcStrListDone (list);
 
@@ -647,6 +685,19 @@ FcCacheFindByAddr (void *object)
     ret = FcCacheFindByAddrUnlocked (object);
     unlock_cache();
     return ret;
+}
+
+uint16_t
+FcPatternEltStride (const FcPattern *pat)
+{
+    FcCacheSkip *skip;
+
+    if (!FcRefIsConst (&pat->ref))
+        return (uint16_t)sizeof (FcPatternElt);
+    skip = FcCacheFindByAddr ((void *)pat);
+    if (!skip)
+        return (uint16_t)sizeof (FcPatternElt);
+    return FcCacheStridePatternElt (skip->cache);
 }
 
 static void
@@ -914,12 +965,13 @@ FcCacheOffsetsValid (FcCache *cache)
 	    const FcLangSet *ls;
 	    const FcRange   *r;
 	    const FcChar8   *s;
+	    uint16_t         elt_stride = FcCacheStridePatternElt (cache);
 
 	    if ((char *)font < base ||
 	        (char *)font > end - sizeof (FcFontSet) ||
 	        font->elts_offset < 0 ||
 	        font->elts_offset > end - (char *)font ||
-	        font->num > (end - (char *)font - font->elts_offset) / sizeof (FcPatternElt) ||
+	        font->num > (end - (char *)font - font->elts_offset) / elt_stride ||
 	        !FcRefIsConst (&font->ref))
 		return FcFalse;
 
@@ -928,8 +980,9 @@ FcCacheOffsetsValid (FcCache *cache)
 		return FcFalse;
 
 	    for (j = 0; j < font->num; j++) {
+		FcPatternElt *ej = FcPatternEltIndex (e, j, elt_stride);
 		last_offset = (char *)font + font->elts_offset;
-		for (l = FcPatternEltValues (&e[j]); l; l = FcValueListNext (l)) {
+		for (l = FcPatternEltValues (ej); l; l = FcValueListNext (l)) {
 		    if ((char *)l < last_offset || (char *)l > end - sizeof (*l) ||
 		        (l->next != NULL && !FcIsEncodedOffset (l->next)))
 			return FcFalse;
@@ -943,7 +996,7 @@ FcCacheOffsetsValid (FcCache *cache)
 			break; /* nop */
 		    case FcTypeString:
 			s = FcValueString (&l->value);
-			if ((intptr_t)s < (intptr_t)&e[j] ||
+			if ((intptr_t)s < (intptr_t)ej ||
 			    (intptr_t)&l->value > (intptr_t)end - sizeof (*l) ||
 			    !FcIsEncodedOffset (l->value.u.s)) {
 			    if (FcDebug() & FC_DBG_CACHE) {
@@ -966,7 +1019,7 @@ FcCacheOffsetsValid (FcCache *cache)
 			break;
 		    case FcTypeLangSet:
 			ls = FcValueLangSet (&l->value);
-			if ((intptr_t)ls < (intptr_t)&e[j] ||
+			if ((intptr_t)ls < (intptr_t)ej ||
 			    (intptr_t)&l->value > (intptr_t)end - sizeof (*l) ||
 			    !FcIsEncodedOffset (l->value.u.l)) {
 			    if (FcDebug() & FC_DBG_CACHE) {
@@ -984,7 +1037,7 @@ FcCacheOffsetsValid (FcCache *cache)
 			break;
 		    case FcTypeRange:
 			r = FcValueRange (&l->value);
-			if ((intptr_t)r < (intptr_t)&e[j] ||
+			if ((intptr_t)r < (intptr_t)ej ||
 			    (intptr_t)&l->value > (intptr_t)end - sizeof (*l) ||
 			    !FcIsEncodedOffset (l->value.u.r)) {
 			    if (FcDebug() & FC_DBG_CACHE) {
@@ -1019,7 +1072,7 @@ FcDirCacheMapFd (FcConfig *config, int fd, struct stat *fd_stat, struct stat *di
     FcBool   allocated = FcFalse;
 
     if (fd_stat->st_size > INTPTR_MAX ||
-        fd_stat->st_size < (int)sizeof (FcCache))
+        fd_stat->st_size < (int)FC_CACHE_HEADER_SIZE_V12)
 	return NULL;
     cache = FcCacheFindByStat (fd_stat);
     if (cache) {
@@ -1074,7 +1127,7 @@ FcDirCacheMapFd (FcConfig *config, int fd, struct stat *fd_stat, struct stat *di
 	allocated = FcTrue;
     }
     if (cache->magic != FC_CACHE_MAGIC_MMAP ||
-        cache->version < FC_CACHE_VERSION_NUMBER ||
+        cache->version < FC_CACHE_MIN_COMPAT_VERSION ||
         cache->size != (intptr_t)fd_stat->st_size ||
         !FcCacheOffsetsValid (cache) ||
         (!FcCacheTimeValid (config, cache, dir_stat) &&
@@ -1274,11 +1327,17 @@ FcDirCacheValidateHelper (FcConfig *config, int fd, struct stat *fd_stat, struct
     FcBool  ret = FcTrue;
     FcCache c;
 
-    if (read (fd, &c, sizeof (FcCache)) != sizeof (FcCache))
+    memset (&c, 0, sizeof (FcCache));
+    if (read (fd, &c, FC_CACHE_HEADER_SIZE_V12) != FC_CACHE_HEADER_SIZE_V12)
 	ret = FcFalse;
     else if (c.magic != FC_CACHE_MAGIC_MMAP)
 	ret = FcFalse;
-    else if (c.version < FC_CACHE_VERSION_NUMBER)
+    else if (c.version < FC_CACHE_MIN_COMPAT_VERSION)
+	ret = FcFalse;
+    else if (c.version >= 13 &&
+             read (fd, (char *)&c + FC_CACHE_HEADER_SIZE_V12,
+                   sizeof (FcCache) - FC_CACHE_HEADER_SIZE_V12) !=
+             (ssize_t)(sizeof (FcCache) - FC_CACHE_HEADER_SIZE_V12))
 	ret = FcFalse;
     else if (fd_stat->st_size != c.size)
 	ret = FcFalse;
@@ -1371,6 +1430,14 @@ FcDirCacheBuild (FcFontSet *set, const FcChar8 *dir, struct stat *dir_stat, FcSt
     cache->fc_version = (FC_VERSION_MAJOR << 24) +
                         (FC_VERSION_MINOR << 12) +
                         FC_VERSION_MICRO;
+
+    cache->stride_pattern     = (uint16_t)sizeof (FcPattern);
+    cache->stride_pattern_elt = (uint16_t)sizeof (FcPatternElt);
+    cache->stride_value_list  = (uint16_t)sizeof (FcValueList);
+    cache->stride_value       = (uint16_t)sizeof (FcValue);
+    cache->stride_charset     = (uint16_t)sizeof (FcCharSet);
+    cache->stride_langset     = (uint16_t)sizeof (FcLangSet);
+    cache->stride_fontset     = (uint16_t)sizeof (FcFontSet);
 
     /*
      * Serialize directory name
@@ -1579,10 +1646,10 @@ FcDirCacheWrite (FcCache *cache, FcConfig *config)
     }
 
 #ifdef HAVE_SYMLINK
-    if (FC_CACHE_MIN_COMPAT_VERSION < FC_CACHE_VERSION_NUMBER) {
+    {
 	int v;
 
-	for (v = FC_CACHE_MIN_COMPAT_VERSION; v < FC_CACHE_VERSION_NUMBER; v++) {
+	for (v = 9; v <= 12; v++) {
 	    FcChar8  compat_base[CACHEBASE_LEN];
 	    FcChar8 *compat_path;
 
@@ -1689,8 +1756,12 @@ FcDirCacheClean (const FcChar8 *cache_dir, FcBool verbose)
 	if (ent->d_name[0] == '.')
 	    continue;
 	file_version = FcCacheFileVersion (ent->d_name);
-	if (file_version < FC_CACHE_MIN_COMPAT_VERSION ||
-	    file_version > FC_CACHE_VERSION_NUMBER)
+	if (file_version < 0) {
+	    const char *suffix = strstr (ent->d_name, FC_CACHE_SUFFIX);
+	    if (!suffix || suffix[sizeof (FC_CACHE_SUFFIX) - 1] != '\0')
+		continue;
+	} else if (file_version < FC_CACHE_MIN_COMPAT_VERSION ||
+	           file_version > FC_CACHE_VERSION_NUMBER)
 	    continue;
 
 	file_name = FcStrBuildFilename (dir, (FcChar8 *)ent->d_name, NULL);

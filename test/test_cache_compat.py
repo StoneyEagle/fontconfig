@@ -4,21 +4,29 @@
 """Cache format compatibility tests.
 
 Verifies that fontconfig can load cache files written by a different
-version.  Two areas are tested:
+version.  Three areas are tested:
 
 1. Header version: FcDirCacheMapFd accepts caches with version >=
-   FC_CACHE_VERSION_NUMBER.  Patching the header to a higher version
-   confirms that a cache written by a newer fontconfig is still loaded.
+   FC_CACHE_MIN_COMPAT_VERSION.  Patching the header to a higher or
+   older-but-compatible version confirms cross-version loading.
 
 2. FcLangSet map_size: entries are accessed via encoded offsets (not
    inline arrays), and map_size guards all bitmap access with
    FC_MIN(map_size, NUM_LANG_SET_MAP), so adding orth files does not
    break compatibility.
+
+3. Stride fields: v13+ caches store sizeof for each struct type in
+   the header.  Patching stride_pattern_elt to a larger value confirms
+   the reader uses the stored stride for array iteration.
+
+4. Compat symlinks: fc-cache creates .cache-9 through .cache-12
+   symlinks pointing to the .fccache file.
 """
 
 import os
 import re
 import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -95,9 +103,9 @@ def _generate_cache(fctest, fcfont):
 def test_cache_newer_version_loadable(fctest, fcfont):
     """A cache with a higher header version must still be loadable.
 
-    FcDirCacheMapFd rejects cache->version < FC_CACHE_VERSION_NUMBER
-    but accepts >=.  Patch the version field upward and verify fc-list
-    still reads the cache instead of regenerating it.
+    FcDirCacheMapFd rejects cache->version < FC_CACHE_MIN_COMPAT_VERSION.
+    Patch the version field upward and verify fc-list still reads the
+    cache instead of regenerating it.
     """
     cache_file = _generate_cache(fctest, fcfont)
 
@@ -206,3 +214,110 @@ def test_langset_backward_compat(fctest, fcfont):
     assert cache_file.stat().st_mtime_ns == mtime_before, (
         "Cache was regenerated instead of using the patched file"
     )
+
+
+def _v12_header_size():
+    """FC_CACHE_HEADER_SIZE_V12 on the current platform."""
+    ptr_size = struct.calcsize("P")
+    return 0x28 + 4 * ptr_size
+
+
+@pytest.mark.skipif(not not os.getenv("EXEEXT"), reason="not working on Win32")
+def test_stride_fields_in_header(fctest, fcfont):
+    """v13 cache must contain stride fields at the correct header offset."""
+    cache_file = _generate_cache(fctest, fcfont)
+
+    with open(cache_file, "rb") as f:
+        data = f.read()
+
+    hdr_size = _v12_header_size()
+    assert len(data) >= hdr_size + 56, "Cache too small for v13 header"
+
+    _, version = struct.unpack_from("<Ii", data, 0)
+    assert version >= 13, f"Expected cache version >= 13, got {version}"
+
+    strides = struct.unpack_from("<7H", data, hdr_size)
+    stride_names = [
+        "pattern", "pattern_elt", "value_list",
+        "value", "charset", "langset", "fontset",
+    ]
+    for name, val in zip(stride_names, strides):
+        assert val > 0, f"stride_{name} should be > 0, got {val}"
+
+    reserved_u16 = struct.unpack_from("<5H", data, hdr_size + 14)
+    for i, val in enumerate(reserved_u16):
+        assert val == 0, f"stride_reserved[{i}] should be 0, got {val}"
+
+    reserved_u64 = struct.unpack_from("<4Q", data, hdr_size + 24)
+    for i, val in enumerate(reserved_u64):
+        assert val == 0, f"reserved[{i}] should be 0, got {val}"
+
+
+@pytest.mark.skipif(not not os.getenv("EXEEXT"), reason="not working on Win32")
+def test_old_version_cache_loadable(fctest, fcfont):
+    """A cache with version patched down to 12 must still be loadable."""
+    cache_file = _generate_cache(fctest, fcfont)
+
+    with open(cache_file, "rb") as f:
+        data = bytearray(f.read())
+
+    struct.pack_into("<i", data, FC_CACHE_VERSION_OFFSET, 12)
+
+    mtime_before = cache_file.stat().st_mtime_ns
+    with open(cache_file, "wb") as f:
+        f.write(data)
+    os.utime(cache_file, ns=(mtime_before, mtime_before))
+
+    for ret, stdout, stderr in fctest.run_list(["-", "family"]):
+        assert ret == 0, f"fc-list failed on v12-patched cache: {stderr}"
+        assert stdout.strip(), "fc-list returned no output"
+
+    assert cache_file.stat().st_mtime_ns == mtime_before, (
+        "Cache was regenerated instead of using the patched file"
+    )
+
+
+@pytest.mark.skipif(not not os.getenv("EXEEXT"), reason="not working on Win32")
+@pytest.mark.skipif(
+    sys.platform == "win32" or not hasattr(os, "symlink"),
+    reason="symlinks not available",
+)
+def test_compat_symlinks(fctest, fcfont):
+    """fc-cache must create .cache-9 through .cache-12 compat symlinks."""
+    cache_file = _generate_cache(fctest, fcfont)
+    cachedir = Path(fctest.cachedir.name)
+
+    assert cache_file.suffix == ".fccache", (
+        f"Expected .fccache suffix, got {cache_file.suffix}"
+    )
+    assert not cache_file.is_symlink(), ".fccache should be a regular file"
+
+    for v in range(9, 13):
+        suffix = f".cache-{v}"
+        symlinks = list(cachedir.glob(f"*{suffix}"))
+        assert len(symlinks) > 0, f"No {suffix} symlink found"
+        for s in symlinks:
+            assert s.is_symlink(), f"{s.name} should be a symlink"
+
+
+@pytest.mark.skipif(not not os.getenv("EXEEXT"), reason="not working on Win32")
+def test_old_suffix_fallback(fctest, fcfont):
+    """fc-list must find old .cache-12 files via fallback probing."""
+    cache_file = _generate_cache(fctest, fcfont)
+    cachedir = Path(fctest.cachedir.name)
+
+    with open(cache_file, "rb") as f:
+        cache_data = f.read()
+
+    old_name = cache_file.name.replace(".fccache", ".cache-12")
+    old_cache = cachedir / old_name
+
+    for f in cachedir.glob("*cache*"):
+        f.unlink()
+
+    with open(old_cache, "wb") as f:
+        f.write(cache_data)
+
+    for ret, stdout, stderr in fctest.run_list(["-", "family"]):
+        assert ret == 0, f"fc-list failed with old .cache-12 fallback: {stderr}"
+        assert stdout.strip(), "fc-list returned no output"
