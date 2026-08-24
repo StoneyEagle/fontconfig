@@ -113,7 +113,7 @@ fcobjshash.gperf: Makefile stamp-fcobjshash.gperf
 	@$(MAKE) stamp-fcobjshash.gperf
 	@touch -r stamp-fcobjshash.gperf $@
 stamp-fcobjshash.gperf: fcobjshash.gperf.c fcobjs.h
-	$(AM_V_GEN) $(CPP) -I$(top_builddir) -I$(top_srcdir) $(CPPFLAGS) $< | \
+	$(AM_V_GEN) $(CPP) -I$(top_builddir) -I$(top_srcdir) $(CPPFLAGS) -g0 $< | \
 	$(SED) 's/^ *//;s/ *, */,/' | \
 	awk ' \
 		/CUT_OUT_BEGIN/ { no_write=1; next; }; \

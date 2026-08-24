@@ -60,6 +60,7 @@ fc_sources = files(
 
 fcobjshash_gperf_i = cc.preprocess(
   'fcobjshash.gperf.c',
+  compile_args: ['-g0'],
   include_directories: incbase,
 )
 fcobjshash_gperf = custom_target(
