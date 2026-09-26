@@ -233,11 +233,28 @@ typedef struct _FcPatternElt {
 struct _FcPattern {
     int      num;
     int      size;
+    /*
+     * Dual-encoded: contains an offset (relative to this struct) if the
+     * pattern is constant/cache-backed (FcRefIsConst(&ref) == FcTrue),
+     * or a direct pointer (FcPatternElt *) cast to intptr_t if dynamic.
+     */
     intptr_t elts_offset;
     FcRef    ref;
 };
 
-#define FcPatternElts(p)     FcOffsetMember (p, elts_offset, FcPatternElt)
+static inline FcPatternElt *
+FcPatternElts (const FcPattern *p)
+{
+    return FcRefIsConst (&p->ref) ?
+	FcOffsetMember (p, elts_offset, FcPatternElt) :
+	(FcPatternElt *) (uintptr_t) p->elts_offset;
+}
+
+static inline void
+FcPatternSetElts (FcPattern *p, FcPatternElt *elts)
+{
+    p->elts_offset = (intptr_t) elts;
+}
 
 #define FcFontSetFonts(fs)   FcPointerMember (fs, fonts, FcPattern *)
 
@@ -405,15 +422,64 @@ typedef struct _FcCharLeaf {
 struct _FcCharSet {
     FcRef    ref; /* reference count */
     int      num; /* size of leaves and numbers arrays */
+    /*
+     * Dual-encoded:
+     * - Const/cache-backed (FcRefIsConst(&ref) == FcTrue):
+     *     leaves_offset is byte offset to intptr_t leaves array (where each element
+     *     is a byte offset relative to the leaves array to an FcCharLeaf);
+     *     numbers_offset is byte offset to FcChar16 numbers array.
+     * - Dynamic:
+     *     leaves_offset is direct pointer to array of (FcCharLeaf *) cast to intptr_t;
+     *     numbers_offset is direct pointer to FcChar16 array cast to intptr_t.
+     */
     intptr_t leaves_offset;
     intptr_t numbers_offset;
 };
 
-#define FcCharSetLeaves(c)           FcOffsetMember (c, leaves_offset, intptr_t)
-#define FcCharSetLeaf(c, i)          (FcOffsetToPtr (FcCharSetLeaves (c),    \
-                                                     FcCharSetLeaves (c)[i], \
-                                                     FcCharLeaf))
-#define FcCharSetNumbers(c)          FcOffsetMember (c, numbers_offset, FcChar16)
+static inline intptr_t *
+FcCharSetLeaves (const FcCharSet *c)
+{
+    return FcRefIsConst (&c->ref) ?
+	FcOffsetMember (c, leaves_offset, intptr_t) :
+	(intptr_t *) (uintptr_t) c->leaves_offset;
+}
+
+static inline FcCharLeaf *
+FcCharSetLeaf (const FcCharSet *c, int i)
+{
+    if (FcRefIsConst (&c->ref))
+    {
+	const intptr_t *leaves = FcOffsetMember (c, leaves_offset, intptr_t);
+	return FcOffsetToPtr (leaves, leaves[i], FcCharLeaf);
+    }
+    return ((FcCharLeaf **) (uintptr_t) c->leaves_offset)[i];
+}
+
+static inline FcChar16 *
+FcCharSetNumbers (const FcCharSet *c)
+{
+    return FcRefIsConst (&c->ref) ?
+	FcOffsetMember (c, numbers_offset, FcChar16) :
+	(FcChar16 *) (uintptr_t) c->numbers_offset;
+}
+
+static inline void
+FcCharSetSetLeaves (FcCharSet *cs, intptr_t *leaves)
+{
+    cs->leaves_offset = (intptr_t) leaves;
+}
+
+static inline void
+FcCharSetSetNumbers (FcCharSet *cs, FcChar16 *numbers)
+{
+    cs->numbers_offset = (intptr_t) numbers;
+}
+
+static inline void
+FcCharSetSetLeaf (FcCharSet *cs, int pos, FcCharLeaf *leaf)
+{
+    ((FcCharLeaf **) (uintptr_t) cs->leaves_offset)[pos] = leaf;
+}
 
 #define FCSS_DEFAULT                 0 /* default behavior */
 #define FCSS_ALLOW_DUPLICATES        1 /* allows for duplicate strings in the set */

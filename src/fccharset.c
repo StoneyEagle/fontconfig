@@ -38,8 +38,8 @@ FcCharSetCreate (void)
 	return 0;
     FcRefInit (&fcs->ref, 1);
     fcs->num = 0;
-    fcs->leaves_offset = 0;
-    fcs->numbers_offset = 0;
+    FcCharSetSetLeaves (fcs, NULL);
+    FcCharSetSetNumbers (fcs, NULL);
     return fcs;
 }
 
@@ -166,9 +166,7 @@ FcCharSetPutLeaf (FcCharSet  *fcs,
 		return FcFalse;
 	    }
 	} else {
-	    int          i;
 	    unsigned int alloced = fcs->num;
-	    uintptr_t    old_leaves = (uintptr_t)leaves;
 	    intptr_t    *new_leaves;
 
 	    alloced *= 2;
@@ -181,24 +179,19 @@ FcCharSetPutLeaf (FcCharSet  *fcs,
 		 * Revert the reallocation of numbers. We update numbers_offset
 		 * first in case realloc() fails.
 		 */
-		fcs->numbers_offset = FcPtrToOffset (fcs, numbers);
+		FcCharSetSetNumbers (fcs, numbers);
 		numbers = realloc (numbers, (alloced / 2) * sizeof (*numbers));
 		/* unlikely to fail though */
 		if (!numbers)
 		    return FcFalse;
-		fcs->numbers_offset = FcPtrToOffset (fcs, numbers);
+		FcCharSetSetNumbers (fcs, numbers);
 		return FcFalse;
-	    }
-	    for (i = 0; i < fcs->num; i++) {
-		// Reconstruct FcCharLeaf* from offset, similar to how FcCharSetLeaf() macro operates
-		FcCharLeaf *leaf = FcOffsetToPtr (old_leaves, new_leaves[i], FcCharLeaf);
-		new_leaves[i] = FcPtrToOffset (new_leaves, leaf);
 	    }
 	    leaves = new_leaves;
 	}
 
-	fcs->leaves_offset = FcPtrToOffset (fcs, leaves);
-	fcs->numbers_offset = FcPtrToOffset (fcs, numbers);
+	FcCharSetSetLeaves (fcs, leaves);
+	FcCharSetSetNumbers (fcs, numbers);
     }
 
     memmove (leaves + pos + 1, leaves + pos,
@@ -206,7 +199,7 @@ FcCharSetPutLeaf (FcCharSet  *fcs,
     memmove (numbers + pos + 1, numbers + pos,
              (fcs->num - pos) * sizeof (*numbers));
     numbers[pos] = (FcChar16)ucs4;
-    leaves[pos] = FcPtrToOffset (leaves, leaf);
+    leaves[pos] = (intptr_t)leaf;
     fcs->num++;
     return FcTrue;
 }
@@ -246,8 +239,7 @@ FcCharSetInsertLeaf (FcCharSet *fcs, FcChar32 ucs4, FcCharLeaf *leaf)
     pos = FcCharSetFindLeafPos (fcs, ucs4);
     if (pos >= 0) {
 	free (FcCharSetLeaf (fcs, pos));
-	FcCharSetLeaves (fcs)[pos] = FcPtrToOffset (FcCharSetLeaves (fcs),
-	                                            leaf);
+	FcCharSetSetLeaf (fcs, pos, leaf);
 	return FcTrue;
     }
     pos = -pos - 1;
@@ -292,10 +284,22 @@ FcCharSetDelChar (FcCharSet *fcs, FcChar32 ucs4)
  */
 
 typedef struct _fcCharSetIter {
-    FcCharLeaf *leaf;
-    FcChar32    ucs4;
-    int         pos;
+    FcCharLeaf        *leaf;
+    FcChar32           ucs4;
+    int                pos;
+    const FcChar16    *numbers;
+    const intptr_t    *leaves_offsets;  /* non-NULL if const */
+    FcCharLeaf *const *leaves_ptrs;     /* non-NULL if dynamic */
 } FcCharSetIter;
+
+static inline FcCharLeaf *
+FcCharSetIterLeaf (const FcCharSetIter *iter, int pos)
+{
+    if (iter->leaves_ptrs)
+	return iter->leaves_ptrs[pos];
+    else
+	return FcOffsetToPtr (iter->leaves_offsets, iter->leaves_offsets[pos], FcCharLeaf);
+}
 
 /*
  * Set iter->leaf to the leaf containing iter->ucs4 or higher
@@ -306,6 +310,17 @@ FcCharSetIterSet (const FcCharSet *fcs, FcCharSetIter *iter)
 {
     int pos = FcCharSetFindLeafPos (fcs, iter->ucs4);
 
+    if (!iter->numbers && fcs) {
+	iter->numbers = FcCharSetNumbers (fcs);
+	if (FcRefIsConst (&fcs->ref)) {
+	    iter->leaves_offsets = FcCharSetLeaves (fcs);
+	    iter->leaves_ptrs = NULL;
+	} else {
+	    iter->leaves_offsets = NULL;
+	    iter->leaves_ptrs = (FcCharLeaf * const *)(uintptr_t)fcs->leaves_offset;
+	}
+    }
+
     if (pos < 0) {
 	pos = -pos - 1;
 	if (pos == fcs->num) {
@@ -313,9 +328,9 @@ FcCharSetIterSet (const FcCharSet *fcs, FcCharSetIter *iter)
 	    iter->leaf = 0;
 	    return;
 	}
-	iter->ucs4 = (FcChar32)FcCharSetNumbers (fcs)[pos] << 8;
+	iter->ucs4 = (FcChar32)iter->numbers[pos] << 8;
     }
-    iter->leaf = FcCharSetLeaf (fcs, pos);
+    iter->leaf = FcCharSetIterLeaf (iter, pos);
     iter->pos = pos;
 }
 
@@ -327,18 +342,38 @@ FcCharSetIterNext (const FcCharSet *fcs, FcCharSetIter *iter)
 	iter->ucs4 = ~0;
 	iter->leaf = 0;
     } else {
-	iter->ucs4 = (FcChar32)FcCharSetNumbers (fcs)[pos] << 8;
-	iter->leaf = FcCharSetLeaf (fcs, pos);
+	iter->ucs4 = (FcChar32)iter->numbers[pos] << 8;
+	iter->leaf = FcCharSetIterLeaf (iter, pos);
 	iter->pos = pos;
     }
 }
 
 static void
-FcCharSetIterStart (const FcCharSet *fcs, FcCharSetIter *iter)
+FcCharSetIterStartAt (const FcCharSet *fcs, FcCharSetIter *iter, FcChar32 ucs4)
 {
-    iter->ucs4 = 0;
+    if (fcs) {
+	iter->numbers = FcCharSetNumbers (fcs);
+	if (FcRefIsConst (&fcs->ref)) {
+	    iter->leaves_offsets = FcCharSetLeaves (fcs);
+	    iter->leaves_ptrs = NULL;
+	} else {
+	    iter->leaves_offsets = NULL;
+	    iter->leaves_ptrs = (FcCharLeaf * const *)(uintptr_t)fcs->leaves_offset;
+	}
+    } else {
+	iter->numbers = NULL;
+	iter->leaves_offsets = NULL;
+	iter->leaves_ptrs = NULL;
+    }
+    iter->ucs4 = ucs4;
     iter->pos = 0;
     FcCharSetIterSet (fcs, iter);
+}
+
+static void
+FcCharSetIterStart (const FcCharSet *fcs, FcCharSetIter *iter)
+{
+    FcCharSetIterStartAt (fcs, iter, 0);
 }
 
 FcCharSet *
@@ -722,8 +757,7 @@ FcCharSetNextPage (const FcCharSet *a,
 
     if (!a)
 	return FC_CHARSET_DONE;
-    ai.ucs4 = *next;
-    FcCharSetIterSet (a, &ai);
+    FcCharSetIterStartAt (a, &ai, *next);
     if (!ai.leaf)
 	return FC_CHARSET_DONE;
 
@@ -759,8 +793,11 @@ FcCharSetCoverage (const FcCharSet *a, FcChar32 page, FcChar32 *result)
 {
     FcCharSetIter ai;
 
-    ai.ucs4 = page;
-    FcCharSetIterSet (a, &ai);
+    if (!a) {
+	memset (result, '\0', 256 / 8);
+	return 0;
+    }
+    FcCharSetIterStartAt (a, &ai, page);
     if (!ai.leaf) {
 	memset (result, '\0', 256 / 8);
 	page = 0;
