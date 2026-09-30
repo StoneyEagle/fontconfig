@@ -47,10 +47,10 @@ variables:
 # changing these will force rebuilding the associated image
 # Note: these tags have no meaning and are not tied to a particular
 # fontconfig version
-  ALPINE_TAG:    '2026-09-04.0-223d58102189'
-  FEDORA_TAG:    '2026-09-04.0-6c56cc96015c'
-  FREEBSD_TAG:   '2026-09-04.0-15f64af77579'
-  MSYS2_TAG:     '2026-09-04.0-ac7998a1497f'
+  ALPINE_TAG:    '2026-09-04.0-428d4c652328'
+  FEDORA_TAG:    '2026-09-04.0-c170be532e86'
+  FREEBSD_TAG:   '2026-09-04.0-c6aba1f45263'
+  MSYS2_TAG:     '2026-09-04.0-f5dd272643a2'
 
   ALPINE_EXEC:   'bash .gitlab-ci/alpine-install.sh'
   FEDORA_EXEC:   'bash .gitlab-ci/fedora-install.sh'

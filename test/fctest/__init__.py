@@ -413,6 +413,49 @@ class FcBrokenFont:
         return self._fonts
 
 
+class FcType1TestFont:
+    def __init__(self, srcdir=None, builddir=None):
+        if builddir is None:
+            builddir = os.environ.get("builddir", ".")
+        if srcdir is None:
+            srcdir = os.environ.get("srcdir", ".")
+
+        search_dirs = []
+        p_build = Path(builddir) / "type1testfonts"
+        if not p_build.exists() or not (p_build / ".stamp").exists():
+            fetch_script = Path(srcdir) / "build-aux" / "fetch-type1-testfonts.py"
+            if fetch_script.exists():
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(fetch_script),
+                        "--target-dir",
+                        str(p_build),
+                        "--try-symlink",
+                    ],
+                    check=False,
+                )
+        if p_build.exists():
+            search_dirs.append(p_build)
+
+        p_src = Path(srcdir)
+        if (p_src / "test").exists():
+            search_dirs.append(p_src / "test")
+        else:
+            search_dirs.append(p_src)
+
+        self._fonts = []
+        for d in search_dirs:
+            for fn in sorted(d.glob("*.pfb")) + sorted(d.glob("*.pfa")):
+                fn_str = str(fn)
+                if fn_str not in self._fonts:
+                    self._fonts.append(fn_str)
+
+    @property
+    def fonts(self):
+        return self._fonts
+
+
 class FcExternalTestFont:
 
     def __init__(self):

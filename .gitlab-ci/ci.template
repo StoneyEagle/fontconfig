@@ -47,7 +47,8 @@ variables:
   {{"%-15s"| format(distro.name.upper() + '_TAG:')}}'{{distro.tag}}-{{
     (ci_fairy.hashfiles('.gitlab-ci/config.yml',
                         '.gitlab-ci/' + distro.name + '-install.sh',
-                        'build-aux/fetch-testfonts.py'))[0:12]
+                        'build-aux/fetch-testfonts.py',
+                        'build-aux/fetch-type1-testfonts.py'))[0:12]
   }}'
 {% endfor %}
 

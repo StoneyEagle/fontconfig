@@ -17,6 +17,7 @@ missing
 test-driver
 /autom4te.cache
 /build*
+!/build-aux/
 /m4/*.m4
 /po*/*.gmo
 /po*/*.pot

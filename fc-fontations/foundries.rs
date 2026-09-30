@@ -29,31 +29,43 @@ use skrifa::{
 };
 use std::ffi::{CStr, CString};
 
-fn foundry_name_to_taglike(foundry: &str) -> Option<&'static str> {
-    match foundry {
-        "Adobe" => Some("adobe"),
-        "Bigelow" => Some("b&h"),
-        "Bitstream" => Some("bitstream"),
-        "Gnat" | "Iorsh" => Some("culmus"),
-        "HanYang System" => Some("hanyang"),
-        "Font21" => Some("hwan"),
-        "IBM" => Some("ibm"),
-        "International Typeface Corporation" => Some("itc"),
-        "Linotype" | "LINOTYPE-HELL" => Some("linotype"),
-        "Microsoft" => Some("microsoft"),
-        "Monotype" => Some("monotype"),
-        "Omega" => Some("omega"),
-        "Tiro Typeworks" => Some("tiro"),
-        "URW" => Some("urw"),
-        "XFree86" => Some("xfree86"),
-        "Xorg" => Some("xorg"),
-        _ => None,
-    }
+/// Foundries recognised by a substring of a font's notice or manufacturer string.
+///
+/// Mirrors `FcNoticeFoundries` in `fcfoundry.h`.
+pub const NOTICE_FOUNDRIES: [(&str, &str); 18] = [
+    ("Adobe", "adobe"),
+    ("Bigelow", "b&h"),
+    ("Bitstream", "bitstream"),
+    ("Gnat", "culmus"),
+    ("Iorsh", "culmus"),
+    ("HanYang System", "hanyang"),
+    ("Font21", "hwan"),
+    ("IBM", "ibm"),
+    ("International Typeface Corporation", "itc"),
+    ("Linotype", "linotype"),
+    ("LINOTYPE-HELL", "linotype"),
+    ("Microsoft", "microsoft"),
+    ("Monotype", "monotype"),
+    ("Omega", "omega"),
+    ("Tiro Typeworks", "tiro"),
+    ("URW", "urw"),
+    ("XFree86", "xfree86"),
+    ("Xorg", "xorg"),
+];
+
+/// Finds a recognised foundry by substring match in a font's notice or manufacturer string.
+///
+/// Mirrors `FcNoticeFoundry` in `src/fcfreetype.c`.
+pub fn notice_to_foundry(notice: &str) -> Option<&'static str> {
+    NOTICE_FOUNDRIES
+        .iter()
+        .find(|(pattern, _)| notice.contains(pattern))
+        .map(|(_, foundry)| *foundry)
 }
 
 fn map_foundry_from_name_entry(localized_strings: &mut LocalizedStrings) -> Option<CString> {
     localized_strings.into_iter().find_map(|foundry_name| {
-        foundry_name_to_taglike(foundry_name.to_string().as_str())
+        notice_to_foundry(foundry_name.to_string().as_str())
             .map(|foundry| CString::new(foundry).unwrap())
     })
 }
@@ -79,4 +91,25 @@ pub fn make_foundry(font: &FontRef) -> Option<CString> {
     map_foundry_from_name_entry(&mut font.localized_strings(StringId::TRADEMARK)).or_else(|| {
         map_foundry_from_name_entry(&mut font.localized_strings(StringId::MANUFACTURER))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_notice_to_foundry() {
+        assert_eq!(
+            notice_to_foundry("Adobe Systems Incorporated"),
+            Some("adobe")
+        );
+        assert_eq!(notice_to_foundry("Bigelow & Holmes"), Some("b&h"));
+        assert_eq!(notice_to_foundry("Bitstream Inc."), Some("bitstream"));
+        assert_eq!(notice_to_foundry("Copyright (c) URW++ Design"), Some("urw"));
+        assert_eq!(
+            notice_to_foundry("Microsoft Corporation"),
+            Some("microsoft")
+        );
+        assert_eq!(notice_to_foundry("Unknown Foundry"), None);
+    }
 }

@@ -12,8 +12,24 @@ if get_option('tests-external-fonts').allowed()
     build_by_default: false,
     build_always_stale: true,
   )
+  fetch_type1_test_fonts = custom_target(
+    'fetch_type1_test_fonts',
+    output: 'type1testfonts',
+    command: [
+      python3,
+      join_paths(meson.project_source_root(), 'build-aux', 'fetch-type1-testfonts.py'),
+      '--target-dir',
+      '@0@/type1testfonts'.format(meson.project_build_root()),
+      '--try-symlink',
+    ],
+    build_by_default: false,
+    build_always_stale: true,
+  )
+  external_font_targets = [fetch_test_fonts, fetch_type1_test_fonts]
 else
   fetch_test_fonts = []
+  fetch_type1_test_fonts = []
+  external_font_targets = []
 endif
 
 tests = [
@@ -104,7 +120,7 @@ endforeach
 
 if get_option('fontations').enabled()
   rust = import('rust')
-  rust.test('fc_fontations_rust_tests', fc_fontations, link_with: [libfontconfig_internal], depends: fetch_test_fonts, env: ['builddir=@0@'.format(meson.project_build_root())],)
+  rust.test('fc_fontations_rust_tests', fc_fontations, link_with: [libfontconfig_internal], depends: external_font_targets, env: ['builddir=@0@'.format(meson.project_build_root())],)
 endif
 
 fs = import('fs')
@@ -140,7 +156,7 @@ if pytest.found()
     ],
     protocol: 'tap',
     timeout: 600,
-    depends: fetch_test_fonts,
+    depends: external_font_targets,
   )
 endif
 

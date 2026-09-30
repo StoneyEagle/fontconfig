@@ -26,9 +26,9 @@ use skrifa::string::LocalizedString;
 use skrifa::{string::StringId, MetadataProvider};
 
 use fcint_bindings::{
-    FC_FAMILYLANG_OBJECT, FC_FAMILY_OBJECT, FC_FULLNAMELANG_OBJECT, FC_FULLNAME_OBJECT,
-    FC_GENERIC_FAMILY_OBJECT, FC_INVALID_OBJECT, FC_POSTSCRIPT_NAME_OBJECT, FC_STYLELANG_OBJECT,
-    FC_STYLE_OBJECT, FcGenericAliasGetClassification,
+    FcGenericAliasGetClassification, FC_FAMILYLANG_OBJECT, FC_FAMILY_OBJECT,
+    FC_FULLNAMELANG_OBJECT, FC_FULLNAME_OBJECT, FC_GENERIC_FAMILY_OBJECT, FC_INVALID_OBJECT,
+    FC_POSTSCRIPT_NAME_OBJECT, FC_STYLELANG_OBJECT, FC_STYLE_OBJECT,
 };
 use fontconfig_bindings::{
     FC_FAMILY_CURSIVE, FC_FAMILY_EMOJI, FC_FAMILY_FANGSONG, FC_FAMILY_FANTASY, FC_FAMILY_MATH,
@@ -167,7 +167,7 @@ fn mangle_full_name_for_named_instance(font: &FontRef, named_instance_id: i32) -
     CString::new(full_name + &subfam).ok()
 }
 
-fn get_generic_family(family_name: &CStr) -> u32 {
+pub(crate) fn get_generic_family(family_name: &CStr) -> u32 {
     // Try FcGenericAliasGetClassification first
     let classification = unsafe { FcGenericAliasGetClassification(family_name.as_ptr()) };
 
@@ -288,8 +288,12 @@ pub fn add_names(
         }
     }
 
-    // Determine generic family and append.
-    // Try each family name until we find one with a classification
+    append_generic_families(pattern);
+
+    Ok(())
+}
+
+pub(crate) fn append_generic_families(pattern: &mut FcPatternBuilder) {
     let mut generic_families: Vec<u32> = Vec::new();
     for family_name in pattern.family_names() {
         let classification = get_generic_family(family_name);
@@ -333,6 +337,4 @@ pub fn add_names(
             ));
         }
     }
-
-    Ok(())
 }

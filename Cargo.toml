@@ -7,9 +7,9 @@ edition = "2021"
 fontconfig-bindings = { path = "./fc-fontations/fontconfig-bindings" }
 fcint-bindings = { path = "./fc-fontations/fcint-bindings"}
 libc = "0.2.178"
-read-fonts = { version = "0.37", features = [ "experimental_traverse" ]}
+read-fonts = { version = "0.39", features = [ "experimental_traverse", "agl" ]}
 font-types = { version = "0.11", features = ["bytemuck"]}
-skrifa = "0.40"
+skrifa = "0.42"
 bytemuck = { version = "1.25.0" , features = [ 'derive', 'min_const_generics'] }
 bytemuck_derive = "1"
 

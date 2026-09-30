@@ -19,8 +19,8 @@ dnf -y swap systemd-standalone-sysusers systemd
 # exclude wine-dxvk to workaround rpm transaction fails
 dnf -y install -x wine-dxvk wine
 
-# Install Android NDK
-dnf -y install unzip
+# Install Android NDK and tools
+dnf -y install unzip cpio rpm
 mkdir /android
 pushd /android
 curl -O https://dl.google.com/android/repository/android-ndk-r28-linux.zip
@@ -30,3 +30,4 @@ rm android-ndk-r28-linux.zip
 popd
 
 python3 build-aux/fetch-testfonts.py --target-dir /testfonts
+python3 build-aux/fetch-type1-testfonts.py --target-dir /type1testfonts

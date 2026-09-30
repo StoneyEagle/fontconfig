@@ -23,14 +23,12 @@
  */
 
 use fontconfig_bindings::{
-    FcWeightFromOpenTypeDouble, FC_SPACING_DUAL, FC_SPACING_MONO, FC_SLANT_ITALIC, FC_SLANT_OBLIQUE,
-    FC_SLANT_ROMAN, FC_WEIGHT_BLACK, FC_WEIGHT_BOLD, FC_WEIGHT_BOOK, FC_WEIGHT_DEMIBOLD,
-    FC_WEIGHT_DEMILIGHT, FC_WEIGHT_EXTRABLACK, FC_WEIGHT_EXTRABOLD, FC_WEIGHT_EXTRALIGHT,
-    FC_WEIGHT_HEAVY, FC_WEIGHT_LIGHT, FC_WEIGHT_MEDIUM, FC_WEIGHT_NORMAL, FC_WEIGHT_REGULAR,
-    FC_WEIGHT_SEMIBOLD, FC_WEIGHT_SEMILIGHT, FC_WEIGHT_THIN, FC_WEIGHT_ULTRABLACK,
-    FC_WEIGHT_ULTRABOLD, FC_WEIGHT_ULTRALIGHT, FC_WIDTH_CONDENSED, FC_WIDTH_EXPANDED,
-    FC_WIDTH_EXTRACONDENSED, FC_WIDTH_EXTRAEXPANDED, FC_WIDTH_NORMAL, FC_WIDTH_SEMICONDENSED,
-    FC_WIDTH_SEMIEXPANDED, FC_WIDTH_ULTRACONDENSED, FC_WIDTH_ULTRAEXPANDED,
+    FcWeightFromOpenTypeDouble, FC_SLANT_ITALIC, FC_SLANT_OBLIQUE, FC_SLANT_ROMAN, FC_SPACING_DUAL,
+    FC_SPACING_MONO, FC_WEIGHT_BLACK, FC_WEIGHT_BOLD, FC_WEIGHT_EXTRABOLD, FC_WEIGHT_EXTRALIGHT,
+    FC_WEIGHT_LIGHT, FC_WEIGHT_MEDIUM, FC_WEIGHT_NORMAL, FC_WEIGHT_SEMIBOLD, FC_WEIGHT_THIN,
+    FC_WIDTH_CONDENSED, FC_WIDTH_EXPANDED, FC_WIDTH_EXTRACONDENSED, FC_WIDTH_EXTRAEXPANDED,
+    FC_WIDTH_NORMAL, FC_WIDTH_SEMICONDENSED, FC_WIDTH_SEMIEXPANDED, FC_WIDTH_ULTRACONDENSED,
+    FC_WIDTH_ULTRAEXPANDED,
 };
 
 use fcint_bindings::{
@@ -53,7 +51,6 @@ use skrifa::{
     prelude::{LocationRef, Size},
     AxisCollection, FontRef, MetadataProvider, NamedInstance, Tag,
 };
-use std::ffi::CString;
 
 fn fc_weight(skrifa_weight: Weight) -> f64 {
     (match skrifa_weight {
@@ -380,110 +377,6 @@ struct AttributesFromStyleString {
     decorative: Option<PatternElement>,
 }
 
-fn contains_weight(style_name: &CString) -> Option<PatternElement> {
-    const WEIGHT_MAP: [(&str, f64); 23] = [
-        ("thin", FC_WEIGHT_THIN as f64),
-        ("extralight", FC_WEIGHT_EXTRALIGHT as f64),
-        ("ultralight", FC_WEIGHT_ULTRALIGHT as f64),
-        ("demilight", FC_WEIGHT_DEMILIGHT as f64),
-        ("semilight", FC_WEIGHT_SEMILIGHT as f64),
-        ("light", FC_WEIGHT_LIGHT as f64),
-        ("book", FC_WEIGHT_BOOK as f64),
-        ("regular", FC_WEIGHT_REGULAR as f64),
-        ("normal", FC_WEIGHT_NORMAL as f64),
-        ("medium", FC_WEIGHT_MEDIUM as f64),
-        ("demibold", FC_WEIGHT_DEMIBOLD as f64),
-        ("demi", FC_WEIGHT_DEMIBOLD as f64),
-        ("semibold", FC_WEIGHT_SEMIBOLD as f64),
-        ("extrabold", FC_WEIGHT_EXTRABOLD as f64),
-        ("superbold", FC_WEIGHT_EXTRABOLD as f64),
-        ("ultrabold", FC_WEIGHT_ULTRABOLD as f64),
-        ("bold", FC_WEIGHT_BOLD as f64),
-        ("ultrablack", FC_WEIGHT_ULTRABLACK as f64),
-        ("superblack", FC_WEIGHT_EXTRABLACK as f64),
-        ("extrablack", FC_WEIGHT_EXTRABLACK as f64),
-        ("ultra", FC_WEIGHT_ULTRABOLD as f64),
-        ("black", FC_WEIGHT_BLACK as f64),
-        ("heavy", FC_WEIGHT_HEAVY as f64),
-    ];
-
-    for weight_mapping in WEIGHT_MAP {
-        if style_name
-            .to_string_lossy()
-            .to_lowercase()
-            .contains(weight_mapping.0)
-        {
-            return Some(PatternElement::new(
-                FC_WEIGHT_OBJECT as i32,
-                weight_mapping.1.into(),
-            ));
-        }
-    }
-    None
-}
-
-fn contains_slant(style_name: &CString) -> Option<PatternElement> {
-    const SLANT_MAP: [(&str, i32); 3] = [
-        ("italic", FC_SLANT_ITALIC as i32),
-        ("kursiv", FC_SLANT_ITALIC as i32),
-        ("oblique", FC_SLANT_OBLIQUE as i32),
-    ];
-
-    for mapping in SLANT_MAP {
-        if style_name
-            .to_string_lossy()
-            .to_lowercase()
-            .contains(mapping.0)
-        {
-            return Some(PatternElement::new(
-                FC_SLANT_OBJECT as i32,
-                mapping.1.into(),
-            ));
-        }
-    }
-    None
-}
-
-fn contains_width(style_name: &CString) -> Option<PatternElement> {
-    const WIDTH_MAP: [(&str, f64); 10] = [
-        ("ultracondensed", FC_WIDTH_ULTRACONDENSED as f64),
-        ("extracondensed", FC_WIDTH_EXTRACONDENSED as f64),
-        ("semicondensed", FC_WIDTH_SEMICONDENSED as f64),
-        ("condensed", FC_WIDTH_CONDENSED as f64),
-        ("normal", FC_WIDTH_NORMAL as f64),
-        ("semiexpanded", FC_WIDTH_SEMIEXPANDED as f64),
-        ("extraexpanded", FC_WIDTH_EXTRAEXPANDED as f64),
-        ("ultraexpanded", FC_WIDTH_ULTRAEXPANDED as f64),
-        ("expanded", FC_WIDTH_EXPANDED as f64),
-        ("extended", FC_WIDTH_EXPANDED as f64),
-    ];
-    for mapping in WIDTH_MAP {
-        if style_name
-            .to_string_lossy()
-            .to_lowercase()
-            .contains(mapping.0)
-        {
-            return Some(PatternElement::new(
-                FC_WIDTH_OBJECT as i32,
-                mapping.1.into(),
-            ));
-        }
-    }
-    None
-}
-
-fn contains_decorative(style_name: &CString) -> Option<PatternElement> {
-    let had_decorative = style_name
-        .to_string_lossy()
-        .to_lowercase()
-        .contains("decorative");
-
-    Some(PatternElement::new(
-        FC_DECORATIVE_OBJECT as i32,
-        had_decorative.into(),
-    ))
-}
-
 impl AttributesFromStyleString {
     fn new(pattern: &FcPatternBuilder) -> Self {
         let style_string = pattern
@@ -495,11 +388,18 @@ impl AttributesFromStyleString {
             });
 
         if let Some(style) = style_string {
+            let style_str = style.to_str().unwrap_or_default();
             Self {
-                weight: contains_weight(style),
-                width: contains_width(style),
-                slant: contains_slant(style),
-                decorative: contains_decorative(style),
+                weight: crate::style_consts::contains_weight(style_str)
+                    .map(|w| PatternElement::new(FC_WEIGHT_OBJECT as i32, w.into())),
+                width: crate::style_consts::contains_width(style_str)
+                    .map(|w| PatternElement::new(FC_WIDTH_OBJECT as i32, w.into())),
+                slant: crate::style_consts::contains_slant(style_str)
+                    .map(|s| PatternElement::new(FC_SLANT_OBJECT as i32, s.into())),
+                decorative: Some(PatternElement::new(
+                    FC_DECORATIVE_OBJECT as i32,
+                    crate::style_consts::contains_decorative(style_str).into(),
+                )),
             }
         } else {
             Self {

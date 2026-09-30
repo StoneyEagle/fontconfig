@@ -32,6 +32,10 @@ mod lang;
 mod name_records;
 mod names;
 mod pattern_bindings;
+mod postscript;
+mod style_consts;
+mod type1;
+mod zapf;
 
 use attributes::append_style_elements;
 use bitmap::add_pixel_size;
@@ -105,15 +109,19 @@ pub unsafe extern "C" fn add_patterns_to_fontset(
         }
     }
 
-    // Fontations does not natively understand WOFF/WOFF2 compressed file,
-    // if we are asked to scan one of those, only add wrapper information
-    // and filename.
-    if patterns_added == 0 {
-        return try_append_woff_pattern(font_set, bytes.as_slice(), &font_path).is_some()
-            as libc::c_int;
+    if patterns_added > 0 {
+        return 1;
     }
 
-    1
+    if type1::is_type1(&bytes) {
+        return type1::build_pattern_for_type1(&bytes, &font_path)
+            .map_or(0, |pattern| unsafe { FcFontSetAdd(font_set, pattern) });
+    }
+
+    // Fontations does not natively understand WOFF/WOFF2 compressed files;
+    // if we are asked to scan one of those, only add wrapper information
+    // and filename.
+    try_append_woff_pattern(font_set, bytes.as_slice(), &font_path).is_some() as libc::c_int
 }
 
 /// Used for controlling FontConfig's behavior per font instance.

@@ -2,7 +2,13 @@
 # Copyright (C) 2025 Google LLC.
 # SPDX-License-Identifier: HPND
 
-from fctest import FcTest, FcExternalTestFont, FcBrokenFont, pytest_generate_tests
+from fctest import (
+    FcTest,
+    FcExternalTestFont,
+    FcBrokenFont,
+    FcType1TestFont,
+    pytest_generate_tests,
+)
 from pathlib import Path
 from enum import Enum
 import pytest
@@ -58,3 +64,24 @@ def test_fontations_freetype_fcquery_equal_broken_fonts(fctest, font_file):
     fctest.logger.info(
         f'Testing for FreeType equivalence with intentionally broken font: {font_file}')
     compare_fontations_freetype(fctest, font_file, RetCodeBehavior.MUST_MATCH)
+
+
+type1_fonts = FcType1TestFont().fonts
+@pytest.mark.parametrize(
+    "font_file",
+    type1_fonts
+    if type1_fonts
+    else [
+        pytest.param(
+            None,
+            marks=pytest.mark.skip(reason="No Type 1 test fonts found"),
+        )
+    ],
+)
+def test_fontations_freetype_fcquery_equal_type1(fctest, font_file):
+    if not font_file:
+        pytest.skip("No Type 1 test fonts found")
+    fctest.logger.info(
+        f'Testing for FreeType equivalence with Type 1 font: {font_file}')
+    compare_fontations_freetype(fctest, font_file, RetCodeBehavior.MUST_BE_ZERO)
+
