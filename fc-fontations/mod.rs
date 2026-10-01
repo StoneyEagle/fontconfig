@@ -37,6 +37,7 @@ mod pcf;
 mod postscript;
 mod style_consts;
 mod type1;
+mod winfnt;
 mod zapf;
 
 use attributes::append_style_elements;
@@ -200,6 +201,20 @@ pub unsafe extern "C" fn add_patterns_to_fontset(
     if bdf::is_bdf(&bytes) {
         return bdf::build_pattern_for_bdf(&bytes, &font_path)
             .map_or(0, |pattern| unsafe { FcFontSetAdd(font_set, pattern) });
+    }
+
+    if winfnt::is_winfnt(&bytes) {
+        return winfnt::build_patterns_for_winfnt(&bytes, &font_path).map_or(0, |patterns| {
+            let mut added = 0;
+            for pattern in patterns {
+                unsafe {
+                    if FcFontSetAdd(font_set, pattern) != 0 {
+                        added += 1;
+                    }
+                }
+            }
+            (added > 0) as libc::c_int
+        });
     }
 
     // Fontations does not natively understand WOFF/WOFF2 compressed files;
