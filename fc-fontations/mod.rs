@@ -23,6 +23,7 @@
  */
 
 mod attributes;
+mod bdf;
 mod bitmap;
 mod capabilities;
 mod charset;
@@ -194,6 +195,11 @@ pub unsafe extern "C" fn add_patterns_to_fontset(
             }
             (added > 0) as libc::c_int
         });
+    }
+
+    if bdf::is_bdf(&bytes) {
+        return bdf::build_pattern_for_bdf(&bytes, &font_path)
+            .map_or(0, |pattern| unsafe { FcFontSetAdd(font_set, pattern) });
     }
 
     // Fontations does not natively understand WOFF/WOFF2 compressed files;
