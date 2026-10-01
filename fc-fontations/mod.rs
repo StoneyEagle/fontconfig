@@ -32,6 +32,7 @@ mod lang;
 mod name_records;
 mod names;
 mod pattern_bindings;
+mod pcf;
 mod postscript;
 mod style_consts;
 mod type1;
@@ -179,6 +180,20 @@ pub unsafe extern "C" fn add_patterns_to_fontset(
     if type1::is_type1(&bytes) {
         return type1::build_pattern_for_type1(&bytes, &font_path)
             .map_or(0, |pattern| unsafe { FcFontSetAdd(font_set, pattern) });
+    }
+
+    if pcf::is_pcf(&bytes) {
+        return pcf::build_patterns_for_pcf(&bytes, &font_path).map_or(0, |patterns| {
+            let mut added = 0;
+            for pattern in patterns {
+                unsafe {
+                    if FcFontSetAdd(font_set, pattern) != 0 {
+                        added += 1;
+                    }
+                }
+            }
+            (added > 0) as libc::c_int
+        });
     }
 
     // Fontations does not natively understand WOFF/WOFF2 compressed files;
