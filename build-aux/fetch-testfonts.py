@@ -8,6 +8,7 @@ import sys
 import tempfile
 from urllib.request import urlretrieve
 import multiprocessing
+from pathlib import Path
 
 import logging
 import sys
@@ -145,6 +146,42 @@ def stamp_hashes_match(stamp_path):
     return True
 
 
+def _compress_to_woff2(font_path_str):
+    woff2_compress = shutil.which("woff2_compress")
+    if not woff2_compress:
+        return
+    font_path = Path(font_path_str)
+    target = font_path.with_suffix(".woff2")
+    if not target.exists():
+        subprocess.run(
+            [woff2_compress, str(font_path)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+def encode_woff2_fonts(target_dir):
+    woff2_compress = shutil.which("woff2_compress")
+    if not woff2_compress:
+        print("woff2_compress not found, skipping WOFF2 compression.", file=sys.stderr)
+        return
+    if not os.path.exists(target_dir) or not os.access(target_dir, os.W_OK):
+        logger.debug(f"{target_dir} is not writable, skipping WOFF2 compression.")
+        return
+    ttf_fonts = [
+        str(p)
+        for p in Path(target_dir).glob("**/*.ttf")
+        if not p.name.startswith(".") and not p.with_suffix(".woff2").exists()
+    ]
+    if not ttf_fonts:
+        logger.info("All fonts already encoded to WOFF2.")
+        return
+    print(f"Encoding {len(ttf_fonts)} fonts to WOFF2...", file=sys.stderr)
+    with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+        pool.map(_compress_to_woff2, ttf_fonts)
+
+
 def main():
     """Main function to parse arguments and download/extract fonts."""
 
@@ -180,6 +217,7 @@ def main():
 
     if stamp_hashes_match(os.path.join(target_dir, STAMP_FILE)):
         logger.info("Fonts already downloaded and extracted.")
+        encode_woff2_fonts(target_dir)
         return 0
 
     os.makedirs(target_dir, exist_ok=True)
@@ -191,6 +229,7 @@ def main():
                 [(source, tmp_dir, target_dir) for source in SOURCES],
             )
             stamp_target_dir(target_dir, hashes)
+    encode_woff2_fonts(target_dir)
 
 
 if __name__ == "__main__":

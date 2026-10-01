@@ -47,15 +47,26 @@ if (fontations.enabled())
   fcint_bindings_pkg.override_dependency(
     declare_dependency(link_with: fcint_bindings_lib))
 
+  fontations_query_sources = ['../src/fcfontations.c', fcstdint_h, fclang_h, alias_headers]
+  fontations_query_deps = []
+  if woff2_dep.found()
+    fontations_query_sources += ['fc_woff2.cpp', 'fc_woff2.h']
+    fontations_query_deps += [woff2_dep]
+  endif
+
   fontations_query_lib = static_library(
     'fc_fontations_query',
     include_directories: incbase,
-    sources: ['../src/fcfontations.c', fcstdint_h, fclang_h, alias_headers],
+    sources: fontations_query_sources,
+    dependencies: fontations_query_deps,
   )
 
-  rust_args_list = ['--check-cfg', 'cfg(skip_external_fonts)']
+  rust_args_list = ['--check-cfg', 'cfg(skip_external_fonts)', '--check-cfg', 'cfg(have_woff2)']
   if not get_option('tests-external-fonts').allowed()
     rust_args_list += ['--cfg', 'skip_external_fonts']
+  endif
+  if woff2_dep.found()
+    rust_args_list += ['--cfg', 'have_woff2']
   endif
 
   fc_fontations = cargo.package().library(

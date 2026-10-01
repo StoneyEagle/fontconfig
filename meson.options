@@ -23,6 +23,8 @@ option('xml-backend', type: 'combo', choices: ['auto', 'expat', 'libxml2'], valu
   description: 'Select xml backend to read config')
 option('fontations', type: 'feature', value: 'disabled',
   description: 'Use Fontations (https://github.com/googlefonts/fontations) for indexing.')
+option('woff2', type: 'feature', value: 'auto',
+  description: 'Use libwoff2dec for WOFF2 decoding support in Fontations.')
 
 # Defaults
 option('default-hinting', type: 'combo', choices: ['noinstall', 'none', 'slight', 'medium', 'full'], value: 'slight',

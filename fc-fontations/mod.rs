@@ -79,6 +79,52 @@ unsafe fn font_path_from_c_str(font_file: *const libc::c_char) -> Option<std::pa
     }
 }
 
+#[cfg(have_woff2)]
+extern "C" {
+    fn fc_woff2_decoded_size(data: *const u8, length: usize) -> usize;
+    fn fc_woff2_decode(
+        data: *const u8,
+        length: usize,
+        out_data: *mut u8,
+        out_capacity: usize,
+        out_length: *mut usize,
+    ) -> bool;
+}
+
+#[cfg(have_woff2)]
+const MAX_WOFF2_DECODE_SIZE: usize = 24 * 1024 * 1024; // 24 MB
+
+#[cfg(have_woff2)]
+fn decode_woff2(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !bytes.starts_with(b"wOF2") {
+        return None;
+    }
+    let mut needed_size = unsafe { fc_woff2_decoded_size(bytes.as_ptr(), bytes.len()) };
+    if needed_size == 0 {
+        needed_size = MAX_WOFF2_DECODE_SIZE;
+    } else if needed_size > MAX_WOFF2_DECODE_SIZE {
+        return None;
+    }
+
+    let mut buf = vec![0u8; needed_size];
+    let mut out_length: usize = 0;
+    let ok = unsafe {
+        fc_woff2_decode(
+            bytes.as_ptr(),
+            bytes.len(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut out_length,
+        )
+    };
+    if ok && out_length > 0 && out_length <= buf.len() {
+        buf.truncate(out_length);
+        Some(buf)
+    } else {
+        None
+    }
+}
+
 #[no_mangle]
 /// Externally called in fcfontations.c as the file scanner function
 /// similar to the job that FreeType performs.
@@ -93,13 +139,30 @@ pub unsafe extern "C" fn add_patterns_to_fontset(
 ) -> libc::c_int {
     let font_path = unsafe { font_path_from_c_str(font_file).unwrap_or_default() };
     let bytes = std::fs::read(&font_path).ok().unwrap_or_default();
-    let fileref = FileRef::new(&bytes).ok();
+
+    let decoded_woff2_bytes: Option<Vec<u8>> = {
+        #[cfg(have_woff2)]
+        {
+            if bytes.starts_with(b"wOF2") {
+                decode_woff2(&bytes)
+            } else {
+                None
+            }
+        }
+        #[cfg(not(have_woff2))]
+        {
+            None
+        }
+    };
+
+    let font_bytes = decoded_woff2_bytes.as_deref().unwrap_or(bytes.as_slice());
+    let fileref = FileRef::new(font_bytes).ok();
 
     let fonts = fonts_and_indices(fileref);
 
     let mut patterns_added: u32 = 0;
     for (font, ttc_index) in fonts {
-        for pattern in build_patterns_for_font(&font, &font_path, ttc_index) {
+        for pattern in build_patterns_for_font(&font, &font_path, bytes.as_slice(), ttc_index) {
             unsafe {
                 if FcFontSetAdd(font_set, pattern) == 0 {
                     return 0;
@@ -190,6 +253,7 @@ fn add_font_file_name(pattern: &mut FcPatternBuilder, font_file: &Path) {
 fn build_patterns_for_font(
     font: &FontRef,
     font_file: &Path,
+    raw_file_bytes: &[u8],
     ttc_index: Option<i32>,
 ) -> Vec<*mut FcPattern> {
     let mut pattern = FcPatternBuilder::new();
@@ -302,9 +366,15 @@ fn build_patterns_for_font(
 
     add_font_file_name(&mut pattern, font_file);
 
+    let wrapper = match raw_file_bytes.get(0..4) {
+        Some(b"wOF2") => "WOFF2",
+        Some(b"wOFF") => "WOFF",
+        _ => "SFNT",
+    };
+
     pattern.append_element(PatternElement::new(
         FC_FONT_WRAPPER_OBJECT as i32,
-        CString::new("SFNT").unwrap().into(),
+        CString::new(wrapper).unwrap().into(),
     ));
 
     pattern.append_element(PatternElement::new(
@@ -355,5 +425,11 @@ mod test {
             assert!(add_patterns_to_fontset(CString::new("").unwrap().into_raw(), font_set) == 0);
             FcFontSetDestroy(font_set);
         }
+    }
+
+    #[test]
+    #[cfg(have_woff2)]
+    fn decode_woff2_invalid_bytes() {
+        assert!(crate::decode_woff2(b"not a woff2").is_none());
     }
 }

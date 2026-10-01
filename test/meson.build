@@ -153,6 +153,7 @@ if pytest.found()
       ),
       'FC_CACHE_VERSION=@0@'.format(cacheversion),
       'FC_CACHE_SNAP_VERSION=@0@'.format(cachesnapversion),
+      'HAVE_LIBWOFF2DEC=@0@'.format(conf.get('HAVE_LIBWOFF2DEC', 0)),
     ],
     protocol: 'tap',
     timeout: 600,

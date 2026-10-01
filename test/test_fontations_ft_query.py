@@ -52,6 +52,8 @@ def compare_fontations_freetype(fctest, font_file, ret_code_behavior: RetCodeBeh
         result_freetype == result_fontations
     ), f"FreeType and Fontations fc-query result must match. Fontations: {result_fontations}, FreeType: {result_freetype}"
 
+    return result_fontations
+
 
 def test_fontations_freetype_fcquery_equal(fctest, parametrized_external_font):
     fctest.logger.info(f'Testing with: {parametrized_external_font}')
@@ -85,3 +87,40 @@ def test_fontations_freetype_fcquery_equal_type1(fctest, font_file):
         f'Testing for FreeType equivalence with Type 1 font: {font_file}')
     compare_fontations_freetype(fctest, font_file, RetCodeBehavior.MUST_BE_ZERO)
 
+
+def test_fontations_freetype_fcquery_equal_woff2(fctest, parametrized_external_font):
+    config_h = Path(fctest.builddir) / "meson-config.h"
+    if not config_h.exists():
+        config_h = Path(fctest.builddir) / "config.h"
+    if config_h.exists() and "#define HAVE_LIBWOFF2DEC 1" not in config_h.read_text():
+        pytest.skip("WOFF2 decoding not enabled in build")
+
+    woff2_path = Path(parametrized_external_font).with_suffix(".woff2")
+    if not woff2_path.exists():
+        pytest.fail(f"WOFF2 font not found: {woff2_path}")
+
+    fctest.logger.info(f"Testing WOFF2 font equivalence: {woff2_path}")
+    result_woff2 = compare_fontations_freetype(
+        fctest, str(woff2_path), RetCodeBehavior.MUST_BE_ZERO
+    )
+
+    # Compare metadata between decoded WOFF2 font and the uncompressed original font
+    fctest.with_fontations = False
+    for _, stdout_ttf, _ in fctest.run_query([parametrized_external_font]):
+        result_ttf = stdout_ttf.strip().splitlines()
+
+    wrapper_woff2 = [l.strip() for l in result_woff2 if l.strip().startswith("fontwrapper:")]
+    wrapper_ttf = [l.strip() for l in result_ttf if l.strip().startswith("fontwrapper:")]
+    assert len(wrapper_woff2) > 0 and all(w == 'fontwrapper: "WOFF2"(s)' for w in wrapper_woff2), (
+        f"Expected WOFF2 fontwrapper for {woff2_path}, got: {wrapper_woff2}"
+    )
+    assert len(wrapper_ttf) == len(wrapper_woff2) and all(t == 'fontwrapper: "SFNT"(s)' for t in wrapper_ttf), (
+        f"Expected SFNT fontwrapper for {parametrized_external_font}, got: {wrapper_ttf}"
+    )
+
+    filter_meta = lambda lines: [
+        l for l in lines if not l.strip().startswith(("file:", "fontwrapper:"))
+    ]
+    assert filter_meta(result_woff2) == filter_meta(result_ttf), (
+        f"WOFF2 metadata must match uncompressed font metadata for {parametrized_external_font}"
+    )

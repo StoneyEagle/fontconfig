@@ -99,6 +99,21 @@ if (fontations.enabled())
   add_languages(['rust'], native: false, required : true)
 endif
 
+woff2_opt = get_option('woff2')
+if fontations.enabled()
+  woff2_dep = dependency('libwoff2dec', required: woff2_opt)
+else
+  if woff2_opt.enabled()
+    warning('woff2 is only needed when fontations is active')
+  endif
+  woff2_dep = dependency('', required: false)
+endif
+if woff2_dep.found()
+  conf.set('HAVE_LIBWOFF2DEC', 1)
+  add_languages(['cpp'], native: false, required: false)
+  add_project_arguments('-DHAVE_CONFIG_H', language: 'cpp')
+endif
+
 pkgmod = import('pkgconfig')
 python3 = import('python').find_installation()
 pytest = find_program('pytest', required: false)
@@ -200,6 +215,9 @@ add_project_arguments('-DHAVE_CONFIG_H', language: 'c')
 c_args = []
 
 deps = [freetype_dep, xml_dep]
+if woff2_dep.found()
+  deps += [woff2_dep]
+endif
 incbase = include_directories('.', 'fc-lang')
 
 # For compatibility to autoconf (regardless of the usage in fontconfig)
@@ -629,11 +647,19 @@ fontconfig_dep = declare_dependency(link_with: libfontconfig,
 )
 meson.override_dependency('fontconfig', fontconfig_dep)
 
+pkg_requires_private = []
+if freetype_dep.found()
+  pkg_requires_private += ['freetype2 ' + freetype_req]
+endif
+if woff2_dep.found()
+  pkg_requires_private += ['libwoff2dec']
+endif
+
 pkgmod.generate(libfontconfig,
   description: 'Font configuration and customization library',
   filebase: 'fontconfig',
   name: 'Fontconfig',
-  requires_private: ['freetype2 ' + freetype_req],
+  requires_private: pkg_requires_private,
   version: fc_version,
   variables: [
     'sysconfdir=@0@'.format(join_paths(prefix, get_option('sysconfdir'))),
@@ -715,7 +741,8 @@ summary({
   'Tools': not get_option('tools').disabled(),
   'iconv': found_iconv == 1,
   'XML backend': xmltype,
-  'Fontations support' : fontations
+  'Fontations support' : fontations,
+  'WOFF2 support (Fontations)' : woff2_dep.found(),
 }, section: 'General', bool_yn: true, list_sep: ', ')
 summary({
   'Hinting': preferred_hinting,

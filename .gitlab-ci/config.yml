@@ -1,4 +1,4 @@
-.default_tag: &default_tag "2026-09-04.0"
+.default_tag: &default_tag "2026-09-23.0"
 
 build_patterns:
   - name: "meson shared expat"
@@ -19,7 +19,7 @@ build_patterns:
       FC_BUILDSYS: meson
       FC_BUILD_TYPE: static
       FC_XML_BACKEND: libxml2
-      FC_BUILD_ENABLED: "fontations"
+      FC_BUILD_ENABLED: "fontations woff2"
       FC_TEST_EXEC: meson-install-static
 
 test_patterns:
@@ -149,6 +149,8 @@ packages:
         "pkgconf",
         "musl-dev",
         "uuidgen",
+        "woff2",
+        "woff2-dev",
       ]
   fedora:
     needed:
@@ -179,6 +181,9 @@ packages:
         "libtsan",
         "libubsan",
         "libabigail",
+        "woff2",
+        "woff2-devel",
+        "woff2-tools",
       ]
   freebsd:
     needed:
@@ -198,6 +203,7 @@ packages:
         "gmake",
         "gettext-runtime",
         "ninja",
+        "woff2",
       ]
   msys2:
     needed:
@@ -212,6 +218,7 @@ packages:
         "mingw-w64-ucrt-x86_64-python-certifi",
         "mingw-w64-ucrt-x86_64-python-pip",
         "mingw-w64-ucrt-x86_64-python-yaml",
+        "mingw-w64-ucrt-x86_64-woff2",
         "mingw-w64-x86_64-expat",
         "mingw-w64-x86_64-freetype",
         "mingw-w64-x86_64-gcc",
@@ -221,4 +228,5 @@ packages:
         "mingw-w64-x86_64-python-certifi",
         "mingw-w64-x86_64-python-pip",
         "mingw-w64-x86_64-python-yaml",
+        "mingw-w64-x86_64-woff2",
       ]
