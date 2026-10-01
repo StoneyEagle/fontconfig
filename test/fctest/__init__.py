@@ -456,6 +456,50 @@ class FcType1TestFont:
         return self._fonts
 
 
+class FcBitmapTestFont:
+    def __init__(self, srcdir=None, builddir=None):
+        if builddir is None:
+            builddir = os.environ.get("builddir", ".")
+        if srcdir is None:
+            srcdir = os.environ.get("srcdir", ".")
+
+        search_dirs = []
+        p_build = Path(builddir) / "bitmaptestfonts"
+        if not p_build.exists() or not (p_build / ".stamp").exists():
+            fetch_script = Path(srcdir) / "build-aux" / "fetch-bitmap-testfonts.py"
+            if fetch_script.exists():
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(fetch_script),
+                        "--target-dir",
+                        str(p_build),
+                        "--try-symlink",
+                    ],
+                    check=False,
+                )
+        if p_build.exists():
+            search_dirs.append(p_build)
+
+        p_src = Path(srcdir)
+        if (p_src / "test").exists():
+            search_dirs.append(p_src / "test")
+        else:
+            search_dirs.append(p_src)
+
+        self._fonts = []
+        for d in search_dirs:
+            for ext in ["*.bdf", "*.pcf", "*.fon", "*.fnt"]:
+                for fn in sorted(d.glob(ext)):
+                    fn_str = str(fn)
+                    if fn_str not in self._fonts:
+                        self._fonts.append(fn_str)
+
+    @property
+    def fonts(self):
+        return self._fonts
+
+
 class FcExternalTestFont:
 
     def __init__(self):
