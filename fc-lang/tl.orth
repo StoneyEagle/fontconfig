@@ -2,7 +2,6 @@
 # fontconfig/fc-lang/tl.orth
 #
 # Copyright © 2009 Roozbeh Pournader
-# Copyright © 2026 fontconfig Authors
 #
 # Permission to use, copy, modify, distribute, and sell this software and its
 # documentation for any purpose is hereby granted without fee, provided that
@@ -24,8 +23,5 @@
 #
 # Tagalog (tl)
 #
-# https://en.wikipedia.org/wiki/Baybayin
-#
-1700-1715
-171f
-1735-1736
+# Since Filipino is standardized Tagalog, we just include that
+include fil.orth

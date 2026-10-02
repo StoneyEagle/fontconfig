@@ -2,7 +2,6 @@
 # fontconfig/fc-lang/so.orth
 #
 # Copyright © 2002 Keith Packard
-# Copyright © 2026 fontconfig Authors
 #
 # Permission to use, copy, modify, distribute, and sell this software and its
 # documentation for any purpose is hereby granted without fee, provided that
@@ -22,9 +21,9 @@
 # TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-# Somali (so)
+# Somali (SO)
 #
-# https://en.wikipedia.org/wiki/Osmanya_script
+# Orthography taken from http://www.ideography.co.uk/library/pdf/charsets.pdf
 #
-10480-1049d
-104a0-104a9
+0041-005a	# Somali doesn't use p, v or z
+0061-007a

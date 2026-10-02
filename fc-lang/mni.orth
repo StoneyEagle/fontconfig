@@ -2,7 +2,6 @@
 # fontconfig/fc-lang/mni.orth
 #
 # Copyright © 2012 Pravin Satpute <psatpute@redhat.com>
-# Copyright © 2026 fontconfig Authors
 #
 # Permission to use, copy, modify, distribute, and sell this software and its
 # documentation for any purpose is hereby granted without fee, provided that
@@ -22,11 +21,15 @@
 # TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-# Manipuri (mni)
+# Maniputi (mni)
 #
-# https://en.wikipedia.org/wiki/Meitei_script
-#
-aae0-aaf6
-abc0-abea
-abec-abed
-abf0-abf9
+# Source: Script grammer: http://tdil-dc.in/tdildcMain/articles/283709Script_Grammar_for_Manipuri.pdf 6th page
+# Characters are encirled in Unicode chart http://pravins.fedorapeople.org/Manipuri-characters.pdf
+# documents
+include bn.orth
+0964
+- 09c4
+09bd
+09ce
+09e6-09ef
+09f1

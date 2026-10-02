@@ -2,7 +2,6 @@
 # fontconfig/fc-lang/jv.orth
 #
 # Copyright © 2009 Roozbeh Pournader
-# Copyright © 2026 fontconfig Authors
 #
 # Permission to use, copy, modify, distribute, and sell this software and its
 # documentation for any purpose is hereby granted without fee, provided that
@@ -24,8 +23,14 @@
 #
 # Javanese (jv)
 #
-# https://en.wikipedia.org/wiki/Javanese_script
+# Sources:
+# http://www.omniglot.com/writing/javanese.htm
+# http://en.wikipedia.org/wiki/Javanese_language
 #
-a980-a9cd
-a9d0-a9d9
-a9de-a9df
+# The historical Javanese script is not the main script anymore. Latin has
+# replaced it.
+#
+0041-005A
+0061-007A
+00C8-00C9
+00E8-00E9
