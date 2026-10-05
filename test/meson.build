@@ -42,6 +42,7 @@ tests = [
   ['test-issue180.c'],
   ['test-family-matching.c'],
   ['test-ptrlist.c', {'include_directories': include_directories('../src'), 'dependencies': libintl_dep}],
+  ['test-fcstr.c', {'include_directories': include_directories('../src'), 'dependencies': libintl_dep}],
   ['test-ostest.c'],
   ['test-y2038.c', {'include_directories': include_directories('../src'), 'dependencies': libintl_dep}],
   ['test-versioned-conf.c'],
@@ -81,6 +82,13 @@ if host_machine.system() != 'windows'
       ['test-d1f48f11.c'],
     ]
   endif
+endif
+
+# FcFreeTypeQuery is only available with the FreeType backend
+if not get_option('fontations').enabled()
+  tests += [
+    ['test-foundry.c', {'dependencies': freetype_dep, 'c_args': ['-DFONTFILE="@0@"'.format(join_paths(meson.current_source_dir(), 'no_family_name.ttf'))]}],
+  ]
 endif
 
 link_with_libs = [libfontconfig_internal]
