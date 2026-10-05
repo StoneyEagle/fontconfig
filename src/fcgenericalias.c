@@ -38,3 +38,46 @@ FcGenericAliasGetClassification (const char *family)
 
     return result;
 }
+
+/*
+ * Derive the genericfamily integer values for a list of family-name
+ * values, using ONLY the curated classification data.
+ *
+ * Used by the matcher to reconstruct genericfamily for fonts loaded from
+ * caches that predate the genericfamily object (issue #562), so those
+ * fonts score like freshly scanned ones for families we can classify
+ * reliably.  Unlike the scanner (fcfreetype.c) it deliberately does NOT
+ * guess a generic from substrings of the family name ("mono", "sans",
+ * ...): that heuristic is prone to false positives, so a family we cannot
+ * classify is reported as FC_FAMILY_UNKNOWN rather than guessed.
+ *
+ * The result is returned by value; its fixed-size array makes it
+ * impossible to overflow (the bit loop and the array share the same
+ * bound), so there is no caller-provided buffer to size wrong.
+ */
+FcGenericFamilyValues
+FcGenericFamilyGetValues (FcValueListPtr families)
+{
+    FcGenericFamilyValues r;
+    FcValueListPtr        l;
+
+    r.n = 0;
+    /* Stop at the first family we can classify, like the scanner does. */
+    for (l = families; l && r.n == 0; l = FcValueListNext (l)) {
+	FcValue  v = FcValueCanonicalize (&l->value);
+	uint32_t field;
+	int      b;
+
+	if (v.type != FcTypeString)
+	    continue;
+	field = FcGenericAliasGetClassification ((const char *)v.u.s);
+	for (b = 0; b < FC_GENERIC_FAMILY_MAX_VALUES; b++)
+	    if ((field & (1 << b)) != 0)
+		r.values[r.n++] = b + 1;
+    }
+    /* No family could be classified. */
+    if (r.n == 0)
+	r.values[r.n++] = FC_FAMILY_UNKNOWN;
+
+    return r;
+}

@@ -115,7 +115,11 @@ bail:
 
 #define CACHEBASE_LEN (1 + 36 + 1 + sizeof (FC_ARCHITECTURE) + sizeof (FC_CACHE_SUFFIX))
 
-#ifdef HAVE_SYMLINK
+/* Rewrite the ".cache-<N>" suffix of a cache basename to a different
+ * version.  Used both by the write side (to create compat symlinks)
+ * and by the read side (to probe for caches written by older
+ * fontconfig).  Independent of symlink support.
+ */
 static FcChar8 *
 FcDirCacheReplaceVersion (const FcChar8 *cache_base,
                           FcChar8        compat_base[CACHEBASE_LEN],
@@ -131,7 +135,6 @@ FcDirCacheReplaceVersion (const FcChar8 *cache_base,
     sprintf ((char *)compat_base + prefix_len, ".cache-%d", version);
     return compat_base;
 }
-#endif
 
 static FcBool
 FcCacheIsMmapSafe (int fd)
@@ -352,6 +355,39 @@ FcDirCacheOpenFile (const FcChar8 *cache_file, struct stat *file_stat)
 }
 
 /*
+ * Open a single cache file, run the callback, and take over ownership of
+ * *cache_hashed* (either stored into *cache_file_ret* on success, or freed).
+ * Returns FcTrue if the file existed and the callback accepted it.
+ */
+static FcBool
+FcDirCacheProcessFile (FcConfig *config, FcChar8 *cache_hashed,
+                       FcBool (*callback) (FcConfig *config, int fd, struct stat *fd_stat,
+                                           struct stat *dir_stat, struct timeval *cache_mtime, void *closure),
+                       void *closure, FcChar8 **cache_file_ret,
+                       struct timeval *latest_mtime, struct stat *dir_stat)
+{
+    struct stat file_stat;
+    int         fd;
+    FcBool      ret = FcFalse;
+
+    fd = FcDirCacheOpenFile (cache_hashed, &file_stat);
+    if (fd < 0) {
+	FcStrFree (cache_hashed);
+	return FcFalse;
+    }
+    ret = (*callback) (config, fd, &file_stat, dir_stat, latest_mtime, closure);
+    close (fd);
+    if (ret && cache_file_ret) {
+	if (*cache_file_ret)
+	    FcStrFree (*cache_file_ret);
+	*cache_file_ret = cache_hashed;
+    } else
+	FcStrFree (cache_hashed);
+
+    return ret;
+}
+
+/*
  * Look for a cache file for the specified dir. Attempt
  * to use each one we find, stopping when the callback
  * indicates success
@@ -362,11 +398,10 @@ FcDirCacheProcess (FcConfig *config, const FcChar8 *dir,
                                        struct stat *dir_stat, struct timeval *cache_mtime, void *closure),
                    void *closure, FcChar8 **cache_file_ret)
 {
-    int            fd = -1;
     FcChar8        cache_base[CACHEBASE_LEN];
     FcStrList     *list;
     FcChar8       *cache_dir, *d;
-    struct stat    file_stat, dir_stat;
+    struct stat    dir_stat;
     FcBool         ret = FcFalse;
     const FcChar8 *sysroot = FcConfigGetSysRoot (config);
     struct timeval latest_mtime = (struct timeval){ 0 };
@@ -389,9 +424,7 @@ FcDirCacheProcess (FcConfig *config, const FcChar8 *dir,
 
     while ((cache_dir = FcStrListNext (list))) {
 	FcChar8 *cache_hashed;
-#ifndef _WIN32
-	FcBool retried = FcFalse;
-#endif
+	FcBool   found;
 
 	if (sysroot)
 	    cache_hashed = FcStrBuildFilename (sysroot, cache_dir, cache_base, NULL);
@@ -399,44 +432,61 @@ FcDirCacheProcess (FcConfig *config, const FcChar8 *dir,
 	    cache_hashed = FcStrBuildFilename (cache_dir, cache_base, NULL);
 	if (!cache_hashed)
 	    break;
-#ifndef _WIN32
-    retry:
-#endif
-	fd = FcDirCacheOpenFile (cache_hashed, &file_stat);
-	if (fd >= 0) {
-	    ret = (*callback) (config, fd, &file_stat, &dir_stat, &latest_mtime, closure);
-	    close (fd);
-	    if (ret) {
-		if (cache_file_ret) {
-		    if (*cache_file_ret)
-			FcStrFree (*cache_file_ret);
-		    *cache_file_ret = cache_hashed;
-		} else
-		    FcStrFree (cache_hashed);
-	    } else
-		FcStrFree (cache_hashed);
+	found = FcDirCacheProcessFile (config, cache_hashed, callback, closure,
+	                               cache_file_ret, &latest_mtime, &dir_stat);
+	if (found)
+	    ret = FcTrue;
+
+	/*
+	 * The current-version cache was not found in this cache directory.
+	 * Probe for caches written by older fontconfig (down to the minimum
+	 * compatible version) in the SAME directory before moving on, so a
+	 * cache written by an older reader (e.g. a Flatpak host's fonts,
+	 * issue #562) is discovered instead of being shadowed by a stale
+	 * current-version cache elsewhere.
+	 */
+	if (!found && FC_CACHE_MIN_COMPAT_VERSION < FC_CACHE_VERSION_NUMBER) {
+	    int v;
+
+	    for (v = FC_CACHE_VERSION_NUMBER - 1; v >= FC_CACHE_MIN_COMPAT_VERSION; v--) {
+		FcChar8  compat_base[CACHEBASE_LEN];
+		FcChar8 *compat_hashed;
+
+		if (!FcDirCacheReplaceVersion (cache_base, compat_base, v))
+		    break;
+		if (sysroot)
+		    compat_hashed = FcStrBuildFilename (sysroot, cache_dir, compat_base, NULL);
+		else
+		    compat_hashed = FcStrBuildFilename (cache_dir, compat_base, NULL);
+		if (!compat_hashed)
+		    break;
+		if (FcDirCacheProcessFile (config, compat_hashed, callback, closure,
+		                           cache_file_ret, &latest_mtime, &dir_stat)) {
+		    ret = FcTrue;
+		    found = FcTrue;
+		    break;
+		}
+	    }
 	}
 #ifndef _WIN32
-	else if (!retried) {
+	if (!found) {
 	    FcChar8 uuid_cache_base[CACHEBASE_LEN];
 
-	    retried = FcTrue;
 	    FcDirCacheBasenameUUID (config, dir, uuid_cache_base);
 	    if (uuid_cache_base[0] != 0) {
-		FcStrFree (cache_hashed);
+		FcChar8 *uuid_hashed;
+
 		if (sysroot)
-		    cache_hashed = FcStrBuildFilename (sysroot, cache_dir, uuid_cache_base, NULL);
+		    uuid_hashed = FcStrBuildFilename (sysroot, cache_dir, uuid_cache_base, NULL);
 		else
-		    cache_hashed = FcStrBuildFilename (cache_dir, uuid_cache_base, NULL);
-		if (!cache_hashed)
-		    break;
-		goto retry;
-	    } else
-		FcStrFree (cache_hashed);
+		    uuid_hashed = FcStrBuildFilename (cache_dir, uuid_cache_base, NULL);
+		if (uuid_hashed &&
+		    FcDirCacheProcessFile (config, uuid_hashed, callback, closure,
+		                           cache_file_ret, &latest_mtime, &dir_stat))
+		    ret = FcTrue;
+	    }
 	}
 #endif
-	else
-	    FcStrFree (cache_hashed);
     }
     FcStrListDone (list);
 
@@ -817,6 +867,11 @@ FcCacheIsNewVersion (FcConfig *config, FcCache *cache)
     }
     if (status == CHECK_DISABLED)
 	return FcFalse;
+    /* The fc_version field does not exist before cache version 10; in an
+     * older cache those bytes are payload and must not be interpreted.
+     */
+    if (cache->version < 10)
+	return FcFalse;
     if (cache->fc_version > version && fc_atomic_int_add (warned, 1) == 0) {
 	fprintf (stderr, "Fontconfig warning: We will not regenerate the cache because some cache files were generated by a newer version (0x%" PRIx64 ") of Fontconfig. Please regenerate the cache with the latest version of Fontconfig to avoid any unexpected behavior. (current version: 0x%" PRIx64 ")\n", cache->fc_version, version);
     }
@@ -1139,7 +1194,7 @@ FcDirCacheMapFd (FcConfig *config, int fd, struct stat *fd_stat, struct stat *di
 	allocated = FcTrue;
     }
     if (cache->magic != FC_CACHE_MAGIC_MMAP ||
-        cache->version < FC_CACHE_VERSION_NUMBER ||
+        cache->version < FC_CACHE_MIN_COMPAT_VERSION ||
         cache->size != (intptr_t)fd_stat->st_size ||
         !FcCacheOffsetsValid (cache) ||
         (!FcCacheTimeValid (config, cache, dir_stat) &&
@@ -1343,7 +1398,7 @@ FcDirCacheValidateHelper (FcConfig *config, int fd, struct stat *fd_stat, struct
 	ret = FcFalse;
     else if (c.magic != FC_CACHE_MAGIC_MMAP)
 	ret = FcFalse;
-    else if (c.version < FC_CACHE_VERSION_NUMBER)
+    else if (c.version < FC_CACHE_MIN_COMPAT_VERSION)
 	ret = FcFalse;
     else if (fd_stat->st_size != c.size)
 	ret = FcFalse;

@@ -26,6 +26,13 @@ libversion = '@0@.@1@.0'.format(soversion, curversion)
 defversion = '@0@.@1@'.format(curversion, fc_version_micro)
 osxversion = curversion + 1
 cacheversion = 12
+# The reader accepts caches down to cachemincompat (see FcDirCacheProcess
+# probing and the version checks in fccache.c).  Backward reading is only
+# safe while every object added since cachemincompat can be reconstructed
+# from what old caches already hold (today only genericfamily, re-derived
+# in fcmatch.c from the family name).  A future cacheversion bump that
+# changes the on-disk format, or adds an object that is NOT reconstructable
+# that way, MUST also raise cachemincompat.
 cachemincompat = 9
 cachesnapversion = 0
 if cachesnapversion > 0

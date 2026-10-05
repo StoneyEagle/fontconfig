@@ -617,6 +617,37 @@ FcCompareFamilies (FcPattern     *pat,
 }
 
 /*
+ * Fonts loaded from caches that predate the genericfamily object
+ * (issue #562) carry no FC_GENERIC_FAMILY element, so the merge-join
+ * below would skip that dimension and hand them an unearned perfect
+ * score.  Re-derive the value from the font's family (curated
+ * classification only) and score it as if the scanner had stored it,
+ * so an old-cache font matches like a freshly scanned one.
+ */
+static FcBool
+FcCompareGenericFamilyBackfill (FcValueListPtr query, /* pattern genericfamily */
+                                FcPattern     *fnt,
+                                double        *value,
+                                FcResult      *result)
+{
+    const FcMatcher      *match = FcObjectToMatcher (FC_GENERIC_FAMILY_OBJECT, FcFalse);
+    FcPatternElt         *fam = FcPatternObjectFindElt (fnt, FC_FAMILY_OBJECT);
+    FcGenericFamilyValues g;
+    FcValueList           vl[FC_GENERIC_FAMILY_MAX_VALUES];
+    int                   k;
+
+    g = FcGenericFamilyGetValues (fam ? FcPatternEltValues (fam) : NULL);
+    for (k = 0; k < g.n; k++) {
+	vl[k].value.type = FcTypeInteger;
+	vl[k].value.u.i = g.values[k];
+	vl[k].binding = FcValueBindingStrong;
+	vl[k].next = (k + 1 < g.n) ? &vl[k + 1] : NULL;
+    }
+    return FcCompareValueList (FC_GENERIC_FAMILY_OBJECT, match,
+                               query, vl, NULL, value, NULL, result);
+}
+
+/*
  * Return a value indicating the distance between the two lists of
  * values
  */
@@ -663,6 +694,26 @@ FcCompare (FcPattern     *pat,
 	    i2++;
 	}
     }
+
+    /*
+     * genericfamily is derivable from the family name, so reconstruct it
+     * for fonts loaded from caches that predate the object rather than
+     * leaving it unscored (issue #562).  This is done outside the
+     * merge-join because the loop can exit before reaching a trailing
+     * query object that the font lacks.
+     * NOTE: when missing-object vs not-matched scoring is unified, this
+     * reconstruction must run before the missing-object policy so
+     * derivable objects are treated as present, not absent.
+     */
+    {
+	FcPatternElt *q_gf = FcPatternObjectFindElt (pat, FC_GENERIC_FAMILY_OBJECT);
+
+	if (q_gf && !FcPatternObjectFindElt (fnt, FC_GENERIC_FAMILY_OBJECT) &&
+	    !FcCompareGenericFamilyBackfill (FcPatternEltValues (q_gf),
+	                                     fnt, value, result))
+	    return FcFalse;
+    }
+
     return FcTrue;
 }
 

@@ -1248,6 +1248,19 @@ FcFontSetDeserialize (const FcFontSet *set);
 FcPrivate uint32_t
 FcGenericAliasGetClassification (const char *family);
 
+/* Max number of generic values a font can carry (classification bits
+ * 0..FC_FAMILY_FANGSONG-1); keep tied to the last FC_FAMILY_* value in
+ * fontconfig.h. */
+#define FC_GENERIC_FAMILY_MAX_VALUES FC_FAMILY_FANGSONG
+
+typedef struct _FcGenericFamilyValues {
+    int values[FC_GENERIC_FAMILY_MAX_VALUES];
+    int n;
+} FcGenericFamilyValues;
+
+FcPrivate FcGenericFamilyValues
+FcGenericFamilyGetValues (FcValueListPtr families);
+
 /* fcplist.c */
 FcPrivate FcPtrList *
 FcPtrListCreate (FcDestroyFunc func);
