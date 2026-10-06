@@ -25,10 +25,24 @@ if get_option('tests-external-fonts').allowed()
     build_by_default: false,
     build_always_stale: true,
   )
-  external_font_targets = [fetch_test_fonts, fetch_type1_test_fonts]
+  fetch_bitmap_test_fonts = custom_target(
+    'fetch_bitmap_test_fonts',
+    output: 'bitmaptestfonts',
+    command: [
+      python3,
+      join_paths(meson.project_source_root(), 'build-aux', 'fetch-bitmap-testfonts.py'),
+      '--target-dir',
+      '@0@/bitmaptestfonts'.format(meson.project_build_root()),
+      '--try-symlink',
+    ],
+    build_by_default: false,
+    build_always_stale: true,
+  )
+  external_font_targets = [fetch_test_fonts, fetch_type1_test_fonts, fetch_bitmap_test_fonts]
 else
   fetch_test_fonts = []
   fetch_type1_test_fonts = []
+  fetch_bitmap_test_fonts = []
   external_font_targets = []
 endif
 

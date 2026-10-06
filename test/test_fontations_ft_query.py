@@ -7,6 +7,7 @@ from fctest import (
     FcExternalTestFont,
     FcBrokenFont,
     FcType1TestFont,
+    FcBitmapTestFont,
     pytest_generate_tests,
 )
 from pathlib import Path
@@ -85,6 +86,26 @@ def test_fontations_freetype_fcquery_equal_type1(fctest, font_file):
         pytest.skip("No Type 1 test fonts found")
     fctest.logger.info(
         f'Testing for FreeType equivalence with Type 1 font: {font_file}')
+    compare_fontations_freetype(fctest, font_file, RetCodeBehavior.MUST_BE_ZERO)
+
+
+bitmap_fonts = FcBitmapTestFont().fonts
+@pytest.mark.parametrize(
+    "font_file",
+    bitmap_fonts
+    if bitmap_fonts
+    else [
+        pytest.param(
+            None,
+            marks=pytest.mark.skip(reason="No bitmap test fonts found"),
+        )
+    ],
+)
+def test_fontations_freetype_fcquery_equal_bitmap(fctest, font_file):
+    if not font_file:
+        pytest.skip("No bitmap test fonts found")
+    fctest.logger.info(
+        f'Testing for FreeType equivalence with bitmap font: {font_file}')
     compare_fontations_freetype(fctest, font_file, RetCodeBehavior.MUST_BE_ZERO)
 
 
