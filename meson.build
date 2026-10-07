@@ -84,7 +84,9 @@ if xmlbackend == 'auto' or xmlbackend == 'expat'
   # Linking expat should not be so difficult... see: https://github.com/mesonbuild/meson/issues/10516
   xml_dep = dependency('expat', required: false)
   if not xml_dep.found()
-    xml_dep = cc.find_library('expat', required : false)
+    if get_option('wrap_mode') != 'forcefallback' or xmlbackend != 'expat'
+      xml_dep = cc.find_library('expat', required : false)
+    endif
     if not xml_dep.found() and xmlbackend == 'expat'
       xml_dep = dependency('expat', method: 'system', required: true, fallback: ['expat', 'expat_dep'])
     else
