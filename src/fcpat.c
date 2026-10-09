@@ -41,7 +41,7 @@ FcPatternCreate (void)
     memset (p, 0, sizeof (FcPattern));
     p->num = 0;
     p->size = 0;
-    p->elts_offset = FcPtrToOffset (p, NULL);
+    FcPatternSetElts (p, NULL);
     FcRefInit (&p->ref, 1);
     return p;
 }
@@ -514,7 +514,7 @@ FcPatternObjectInsertElt (FcPattern *p, FcObject object)
 		e = (FcPatternElt *)malloc (s * sizeof (FcPatternElt));
 	    if (!e)
 		return FcFalse;
-	    p->elts_offset = FcPtrToOffset (p, e);
+	    FcPatternSetElts (p, e);
 	    while (p->size < s) {
 		e[p->size].object = 0;
 		e[p->size].values = NULL;

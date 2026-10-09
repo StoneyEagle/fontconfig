@@ -175,26 +175,24 @@ void
 FcCharSetPrintFile (FILE *stream, const FcCharSet *c)
 {
     int       i, j;
-    intptr_t *leaves = FcCharSetLeaves (c);
     FcChar16 *numbers = FcCharSetNumbers (c);
 
 #if 0
     fprintf (stream, "CharSet  0x%x\n", (intptr_t) c);
-    fprintf (stream, "Leaves:  +%d = 0x%x\n", c->leaves_offset, (intptr_t) leaves);
+    fprintf (stream, "Leaves:  +%d = 0x%x\n", c->leaves_offset, (intptr_t) FcCharSetLeaves (c));
     fprintf (stream, "Numbers: +%d = 0x%x\n", c->numbers_offset, (intptr_t) numbers);
 
     for (i = 0; i < c->num; i++)
     {
-	fprintf (stream, "Page %d: %04x +%d = 0x%x\n",
-		 i, numbers[i], leaves[i],
-		 (intptr_t) FcOffsetToPtr (leaves, leaves[i], FcCharLeaf));
+	fprintf (stream, "Page %d: %04x = 0x%x\n",
+		 i, numbers[i],
+		 (intptr_t) FcCharSetLeaf (c, i));
     }
 #endif
 
     fprintf (stream, "\n");
     for (i = 0; i < c->num; i++) {
-	intptr_t    leaf_offset = leaves[i];
-	FcCharLeaf *leaf = FcOffsetToPtr (leaves, leaf_offset, FcCharLeaf);
+	FcCharLeaf *leaf = FcCharSetLeaf (c, i);
 
 	fprintf (stream, "\t");
 	fprintf (stream, "%04x:", numbers[i]);
