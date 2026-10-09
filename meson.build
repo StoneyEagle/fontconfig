@@ -183,6 +183,7 @@ check_funcs = [
   ['gettext'],
   ['localtime_r'],
   ['strdup'],
+  ['posix_memalign', {'prefix': '#include <stdlib.h>'}],
   ['uselocale'],
 ]
 
