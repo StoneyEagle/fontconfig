@@ -292,53 +292,145 @@ impl<'a> AttributesToPattern<'a> {
     }
 
     // Determine FontConfig spacing property.
-    // In fcfreetype.c FcFreeTypeSpacing a heuristic checks whether the glyphs
-    //  for a bitmap font are "approximately equal".
-    // For this purpose, fcfreetype.c selects the strike size closest to 16 px,
-    // then iterates over available glyphs and checks whether the advance width
-    // is within a relative tolerance of 1/33.
-    // We'll do this based on skrifa advances here - if needed, this can be
-    // moved to selecting a particular bitmap strike size and compare pixel
-    // widths.
-    fn spacing_from_advances(advances: impl Iterator<Item = f32>) -> Option<i32> {
-        let mut encountered_advances = Vec::new();
+    //
+    // This mirrors FcSpacingClassify() in src/fcfreetype.c -- the two must stay
+    // in sync so the FreeType and Fontations backends agree (enforced by
+    // test_fontations_ft_query.py).  It runs in two stages:
+    //   1. reproduce the legacy rule (single width -> MONO; two widths in a 2:1
+    //      ratio -> DUAL), so nothing that already had a spacing is reclassified;
+    //   2. only when the legacy rule yields proportional, recover a grid font --
+    //      one whose nonzero advances are integer multiples k*W of a base cell W
+    //      -- but only if the font monospaces its ASCII letters.  That gate is
+    //      what keeps uniform full-width scripts, emoji and symbol fonts (grid
+    //      conformant but not monospaced Latin) from being promoted.
+    //
+    // Takes (codepoint, advance) pairs.  Returns None for proportional fonts (no
+    // FC_SPACING element is emitted).
+    fn spacing_from_advances(advances: impl Iterator<Item = (u32, f32)>) -> Option<i32> {
+        const MAX_CLUSTERS: usize = 64; // real grid fonts have only a few distinct advances
+        const GRID_PERCENT: i64 = 98; // min % of advances that must sit on the cell grid
+        const SIGNIFICANT: i64 = 20; // a base-cell candidate holds >= total/20 (5%)
+        const MIN_ASCII: i64 = 20; // min ASCII letters/digits needed to judge Latin spacing
 
         let approximately_equal =
-            |a: f32, b: f32| (a - b).abs() / a.abs().max(b.abs()) <= 1.0 / 33.0;
+            |a: f32, b: f32| (a - b).abs() * 33.0 <= a.abs().max(b.abs());
 
-        'outer: for advance in advances {
-            let mut may_push: Option<f32> = None;
-            if encountered_advances.is_empty() {
-                encountered_advances.push(advance);
+        // Cluster nonzero advances by 3% tolerance, and track whether the ASCII
+        // letters/digits share a single advance.
+        let mut value: Vec<f32> = Vec::new();
+        let mut count: Vec<i64> = Vec::new();
+        let mut total: i64 = 0;
+        let mut overflow = false;
+        let mut ascii_width = 0.0f32;
+        let mut ascii_count: i64 = 0;
+        let mut ascii_varies = false;
+
+        'collect: for (codepoint, advance) in advances {
+            if advance <= 0.0 {
                 continue;
             }
-
-            for encountered in encountered_advances.iter() {
-                if encountered_advances.len() >= 3 {
-                    break 'outer;
+            if (0x30..=0x39).contains(&codepoint)
+                || (0x41..=0x5A).contains(&codepoint)
+                || (0x61..=0x7A).contains(&codepoint)
+            {
+                if ascii_count == 0 {
+                    ascii_width = advance;
+                } else if !approximately_equal(advance, ascii_width) {
+                    ascii_varies = true;
                 }
-                if approximately_equal(advance, *encountered) {
-                    may_push = None;
-                    break;
-                }
-                may_push = Some(advance);
+                ascii_count += 1;
             }
-            if let Some(push) = may_push {
-                encountered_advances.push(push);
+            if overflow {
+                continue;
+            }
+            for (i, v) in value.iter().enumerate() {
+                if approximately_equal(advance, *v) {
+                    count[i] += 1;
+                    total += 1;
+                    continue 'collect;
+                }
+            }
+            if value.len() >= MAX_CLUSTERS {
+                // Far more distinct widths than any cell-grid font: proportional.
+                overflow = true;
+                continue;
+            }
+            value.push(advance);
+            count.push(1);
+            total += 1;
+        }
+
+        // Stage 1 -- legacy classification, preserved verbatim.
+        if !overflow {
+            // No advances, or every glyph the same width: MONO.
+            if total <= 0 || value.len() <= 1 {
+                return Some(FC_SPACING_MONO as i32);
+            }
+            // Exactly two widths in a 2:1 ratio: DUAL.
+            if value.len() == 2 {
+                let lo = value[0].min(value[1]);
+                let hi = value[0].max(value[1]);
+                if approximately_equal(lo * 2.0, hi) {
+                    return Some(FC_SPACING_DUAL as i32);
+                }
             }
         }
 
-        match encountered_advances.len() {
-            1 => Some(FC_SPACING_MONO as i32),
-            2 if approximately_equal(
-                encountered_advances[0].min(encountered_advances[1]) * 2.0,
-                encountered_advances[0].max(encountered_advances[1]),
-            ) =>
-            {
-                Some(FC_SPACING_DUAL as i32)
-            }
+        // Stage 2 -- recover grid fonts that monospace their ASCII.
+        let ascii_monospaced = ascii_count >= MIN_ASCII && !ascii_varies;
+        if overflow || !ascii_monospaced {
+            return None;
+        }
 
-            _ => None,
+        let on_grid_for = |w: f32| -> i64 {
+            let mut on = 0;
+            for (i, v) in value.iter().enumerate() {
+                let mult = (*v / w).round();
+                if mult >= 1.0 && approximately_equal(*v, mult * w) {
+                    on += count[i];
+                }
+            }
+            on
+        };
+
+        // Try every significant cluster's width as the base cell W, and keep
+        // whichever puts the most advances on an integer grid.  Only real
+        // clusters are candidates: synthesising finer ones (e.g. W/2) would let
+        // the scattered advances of a proportional font land on a dense grid by
+        // coincidence.
+        let mut best_on_grid: i64 = 0;
+        let mut best_w: f32 = 0.0;
+        for i in 0..value.len() {
+            if count[i] * SIGNIFICANT < total {
+                continue; // ignore minor clusters as base-cell candidates
+            }
+            let w = value[i];
+            if w <= 0.0 {
+                continue;
+            }
+            let on = on_grid_for(w);
+            if on > best_on_grid {
+                best_on_grid = on;
+                best_w = w;
+            }
+        }
+
+        if best_w <= 0.0 || best_on_grid * 100 < total * GRID_PERCENT {
+            return None;
+        }
+
+        // On a grid: single-width is mono, dual-width (half/full cell, e.g. CJK)
+        // is dual.  Decide from the most populated cluster.
+        let mut dom = 0;
+        for i in 1..count.len() {
+            if count[i] > count[dom] {
+                dom = i;
+            }
+        }
+        if approximately_equal(value[dom], 2.0 * best_w) {
+            Some(FC_SPACING_DUAL as i32)
+        } else {
+            Some(FC_SPACING_MONO as i32)
         }
     }
 
@@ -358,10 +450,10 @@ impl<'a> AttributesToPattern<'a> {
             .font_ref
             .charmap()
             .mappings()
-            .filter_map(|(_codepoint, gid)| {
+            .filter_map(|(codepoint, gid)| {
                 glyph_metrics
                     .advance_width(gid)
-                    .and_then(|adv| if adv > 0.0 { Some(adv) } else { None })
+                    .and_then(|adv| if adv > 0.0 { Some((codepoint, adv)) } else { None })
             });
 
         Self::spacing_from_advances(advances)
@@ -564,72 +656,127 @@ mod test {
     use crate::attributes::AttributesToPattern;
     use fontconfig_bindings::{FC_SPACING_DUAL, FC_SPACING_MONO};
 
-    const THRESHOLD_FACTOR_DOWN: f32 = 1.0 - 1.0 / 33.0;
-    const THRESHOLD_FACTOR_UP: f32 = 1.0 + 1.0 / 33.0;
+    // ASCII letter coverage for a synthetic font.
+    enum Ascii {
+        None,       // no Latin letters (e.g. CJK / emoji / symbol fonts)
+        Mono(f32),  // Latin letters present and all at this advance (monospaced)
+        Varies,     // Latin letters present but proportional
+    }
 
-    fn assert_spacing(advances: impl Iterator<Item = f32>, expectation: Option<i32>) {
+    // Build (codepoint, advance) glyphs from (advance, count) cluster pairs.
+    // The cluster glyphs are given non-ASCII codepoints so only the explicit
+    // Ascii spec drives the ASCII-monospace gate.
+    fn glyphs(pairs: &[(f32, usize)], ascii: Ascii) -> Vec<(u32, f32)> {
+        let mut v = Vec::new();
+        let mut cp = 0x3000u32; // CJK area: never ASCII
+        for &(adv, count) in pairs {
+            for _ in 0..count {
+                v.push((cp, adv));
+                cp += 1;
+            }
+        }
+        match ascii {
+            Ascii::None => {}
+            // 26 lowercase letters (>= MIN_ASCII) at one advance.
+            Ascii::Mono(w) => v.extend((0x61..=0x7Au32).map(|c| (c, w))),
+            // 26 lowercase letters at increasing advances.
+            Ascii::Varies => {
+                v.extend((0x61..=0x7Au32).enumerate().map(|(i, c)| (c, 500.0 + i as f32 * 50.0)))
+            }
+        }
+        v
+    }
+
+    // The cases below mirror test/test-spacing.c (the FreeType-side unit test)
+    // so both backends are checked against the same real-font corpus.
+    fn assert_spacing(pairs: &[(f32, usize)], ascii: Ascii, expectation: Option<i32>) {
         assert_eq!(
-            AttributesToPattern::spacing_from_advances(advances),
+            AttributesToPattern::spacing_from_advances(glyphs(pairs, ascii).into_iter()),
             expectation
         );
     }
 
     #[test]
     fn spacing_mono() {
-        assert_spacing([10.0].iter().cloned(), Some(FC_SPACING_MONO as i32));
-
+        // Uniform width -> MONO via the legacy stage (ASCII irrelevant).
+        assert_spacing(&[(600.0, 1000)], Ascii::None, Some(FC_SPACING_MONO as i32));
+        // Grid font with a 2x em dash plus a stray off-grid glyph, monospaced
+        // ASCII: recovered as MONO (mirrors Noto Sans Mono at 99.97%).  The old
+        // "first three distinct advances" rule wrongly reported this proportional.
         assert_spacing(
-            [
-                10.0,
-                10.0,
-                10.0,
-                10.0 * THRESHOLD_FACTOR_UP,
-                10.0 * THRESHOLD_FACTOR_DOWN,
-            ]
-            .iter()
-            .cloned(),
+            &[(563.0, 9994), (1126.0, 3), (800.0, 3)],
+            Ascii::Mono(563.0),
             Some(FC_SPACING_MONO as i32),
         );
     }
 
     #[test]
-    fn spacing_proportional() {
+    fn spacing_dual() {
+        // Two widths in a 2:1 ratio -> DUAL via the legacy stage, preserved even
+        // without Latin (mirrors Droid Sans Japanese).
         assert_spacing(
-            [10.0, 10.0 * THRESHOLD_FACTOR_UP + 0.01].iter().cloned(),
-            None,
+            &[(128.0, 63), (256.0, 6555)],
+            Ascii::None,
+            Some(FC_SPACING_DUAL as i32),
         );
-
-        assert_spacing(
-            [10.0, 10.0 * THRESHOLD_FACTOR_DOWN - 0.01].iter().cloned(),
-            None,
-        );
-
-        assert_spacing([10.0, 15.0].iter().cloned(), None);
-
-        assert_spacing([10.0, 15.0, 20.0].iter().cloned(), None);
     }
 
     #[test]
-    fn advances_dual() {
-        assert_spacing([10.0, 20.0].iter().cloned(), Some(FC_SPACING_DUAL as i32));
-
+    fn spacing_ascii_gate() {
+        // Same uniform full-width grid, classified only by the ASCII gate:
+        // promoted to MONO with monospaced ASCII, proportional without it
+        // (the latter mirrors Noto Serif Tangut / Hentaigana / emoji).
         assert_spacing(
-            [10.0, 20.0, 10.0, 20.0, 10.0, 20.0].iter().cloned(),
-            Some(FC_SPACING_DUAL as i32),
+            &[(1000.0, 9800), (2000.0, 150), (3000.0, 50)],
+            Ascii::Mono(1000.0),
+            Some(FC_SPACING_MONO as i32),
         );
-
         assert_spacing(
-            [
-                10.0,
-                20.0 * THRESHOLD_FACTOR_UP,
-                10.0,
-                20.0,
-                10.0 * THRESHOLD_FACTOR_DOWN,
-                20.0,
-            ]
-            .iter()
-            .cloned(),
-            Some(FC_SPACING_DUAL as i32),
+            &[(1000.0, 9800), (2000.0, 150), (3000.0, 50)],
+            Ascii::None,
+            None,
+        );
+    }
+
+    #[test]
+    fn spacing_proportional() {
+        // Proportional by design -- stays proportional even if named "Mono"
+        // (mirrors Latin Modern Mono Prop at 27% grid conformance).
+        assert_spacing(
+            &[(261.0, 270), (400.0, 250), (550.0, 240), (700.0, 240)],
+            Ascii::Mono(261.0),
+            None,
+        );
+        // CJK "mono": 73% on the 500/1000 grid, ~26% Hangul off-grid at 920.
+        // Half-width Latin is monospaced, yet the grid threshold still rejects it.
+        assert_spacing(
+            &[(1000.0, 6000), (500.0, 1300), (920.0, 2700)],
+            Ascii::Mono(500.0),
+            None,
+        );
+        // One dominant width (94.9%) plus a scattered tail -- proportional
+        // (mirrors AlgolRevived).  The tail sits on a 63 (W/2) grid, so a
+        // half-width base-cell candidate would wrongly promote this to DUAL;
+        // only whole-cluster candidates keep it proportional.
+        assert_spacing(
+            &[
+                (126.0, 9190),
+                (190.0, 100),
+                (310.0, 90),
+                (440.0, 85),
+                (570.0, 80),
+                (695.0, 75),
+                (820.0, 61),
+            ],
+            Ascii::Mono(126.0),
+            None,
+        );
+        // Grid-conformant but with proportional Latin -> rejected by the ASCII
+        // gate (e.g. an ideographic font that includes proportional Latin).
+        assert_spacing(
+            &[(1000.0, 9800), (2000.0, 150), (3000.0, 50)],
+            Ascii::Varies,
+            None,
         );
     }
 }

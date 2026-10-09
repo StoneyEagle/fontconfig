@@ -504,6 +504,9 @@ FcFontHasHint (FT_Face face);
 static int
 FcFreeTypeSpacing (FT_Face face);
 
+static FcCharSet *
+FcFreeTypeCharSetAndSpacingInternal (FT_Face face, int *spacing);
+
 #define NUM_FC_MAC_ROMAN_FAKE (int)(sizeof (fcMacRomanFake) / sizeof (fcMacRomanFake[0]))
 
 /* From http://www.unicode.org/Public/MAPPINGS/VENDORS/APPLE/ROMAN.TXT */
@@ -1953,10 +1956,14 @@ FcFreeTypeQueryFaceInternal (const FT_Face   face,
     /*
      * Compute the unicode coverage for the font
      */
-    if (cs_share && *cs_share)
+    spacing = FC_SPACING_PROPORTIONAL;
+    if (cs_share && *cs_share) {
 	cs = FcCharSetCopy (*cs_share);
-    else {
-	cs = FcFreeTypeCharSet (face, NULL);
+	/* Charset reused from a sibling face, but spacing is per-face. */
+	spacing = FcFreeTypeSpacing (face);
+    } else {
+	/* Compute charset and spacing together in one cmap traversal. */
+	cs = FcFreeTypeCharSetAndSpacingInternal (face, &spacing);
 	if (cs_share)
 	    *cs_share = FcCharSetCopy (cs);
     }
@@ -1968,7 +1975,6 @@ FcFreeTypeQueryFaceInternal (const FT_Face   face,
     if (!FcPatternObjectAddBool (pat, FC_SYMBOL_OBJECT, symbol))
 	goto bail1;
 
-    spacing = FcFreeTypeSpacing (face);
 #if HAVE_FT_GET_BDF_PROPERTY
     /* For PCF fonts, override the computed spacing with the one from
        the property */
@@ -2406,13 +2412,205 @@ static inline FcBool fc_approximately_equal (int x, int y)
     return abs (x - y) * 33 <= fc_max (abs (x), abs (y));
 }
 
+/*
+ * Monospace (FC_SPACING) detection.
+ *
+ * Two-stage, deliberately additive:
+ *
+ *  1. Reproduce the historical classification (a font whose advances collapse
+ *     to a single width is MONO; two widths in a 2:1 ratio is DUAL).  Whatever
+ *     that recognises is returned unchanged, so this code never reclassifies a
+ *     font that already had a spacing -- in particular CJK / ideographic, emoji
+ *     and symbol fonts (whose uniform full-cell advances are not monospaced
+ *     Latin text) keep exactly the spacing they had before.
+ *
+ *  2. Only when the legacy rule says PROPORTIONAL do we try to recover a grid
+ *     font: a monospace font lays every glyph on a fixed cell grid, so every
+ *     nonzero advance is an integer multiple k*W of a base cell W (a wide glyph
+ *     -- an em dash, a CJK ideograph -- spans 2 or 3 cells).  This recovers
+ *     fonts such as Noto Sans Mono and Latin Modern Mono, which the legacy rule
+ *     wrongly rejected because of a handful of intentionally wide glyphs.
+ *
+ * Recovery is gated on the font actually monospacing its ASCII letters: that is
+ * the defining trait of a Latin monospace font, and it is what keeps uniform
+ * full-width scripts (ideographic, kana, emoji) from being promoted.
+ * The gate is name-independent -- a font named "...Mono" that is proportional by
+ * design never passes it.
+ */
+#define FC_SPACING_MAX_CLUSTERS 64 /* real grid fonts have only a few distinct advances */
+#define FC_SPACING_GRID_PERCENT 98 /* min % of advances that must sit on the cell grid */
+#define FC_SPACING_SIGNIFICANT  20 /* a cluster is a base-cell candidate at >= total/20 (5%) */
+#define FC_SPACING_MIN_ASCII    20 /* min ASCII letters/digits needed to judge Latin spacing */
+
+typedef struct _FcAdvanceClusters
+{
+    int    value[FC_SPACING_MAX_CLUSTERS]; /* representative advance of each cluster */
+    int    count[FC_SPACING_MAX_CLUSTERS]; /* glyphs tallied into each cluster */
+    int    num;                            /* clusters in use */
+    int    total;                          /* total nonzero advances tallied */
+    FcBool overflow;                       /* more distinct advances than any grid font has */
+    int    ascii_width;                    /* advance of the first ASCII letter/digit seen */
+    int    ascii_count;                    /* ASCII letters/digits seen */
+    FcBool ascii_varies;                   /* an ASCII letter/digit had a different advance */
+} FcAdvanceClusters;
+
+static void
+FcAdvanceClustersAdd (FcAdvanceClusters *c, FcChar32 ucs4, FT_Pos advance)
+{
+    int a = (int)advance;
+    int j;
+
+    if (a <= 0)
+	return;
+    /* Track whether the ASCII letters/digits share a single advance -- the
+     * defining trait of a Latin monospace font. */
+    if ((ucs4 >= '0' && ucs4 <= '9') ||
+        (ucs4 >= 'A' && ucs4 <= 'Z') ||
+        (ucs4 >= 'a' && ucs4 <= 'z')) {
+	if (c->ascii_count == 0)
+	    c->ascii_width = a;
+	else if (!fc_approximately_equal (a, c->ascii_width))
+	    c->ascii_varies = FcTrue;
+	c->ascii_count++;
+    }
+    if (c->overflow)
+	return;
+    for (j = 0; j < c->num; j++)
+	if (fc_approximately_equal (a, c->value[j])) {
+	    c->count[j]++;
+	    c->total++;
+	    return;
+	}
+    if (c->num >= FC_SPACING_MAX_CLUSTERS) {
+	/* Far more distinct widths than any cell-grid font: proportional. */
+	c->overflow = FcTrue;
+	return;
+    }
+    c->value[c->num] = a;
+    c->count[c->num] = 1;
+    c->num++;
+    c->total++;
+}
+
+static FcBool
+FcAdvanceClustersAsciiMono (const FcAdvanceClusters *c)
+{
+    return c->ascii_count >= FC_SPACING_MIN_ASCII && !c->ascii_varies;
+}
+
+/*
+ * Classify a font from its advance-width clusters.  Exposed (via fcint.h) so
+ * the heuristic can be unit tested with synthetic cluster data.
+ */
+FcPrivate int
+FcSpacingClassify (const int *value,
+                   const int *count,
+                   int        num,
+                   int        total,
+                   FcBool     overflow,
+                   FcBool     ascii_monospaced)
+{
+    int  i, k;
+    long best_on_grid = 0;
+    int  best_w = 0;
+    int  dom;
+
+    /*
+     * Stage 1 -- legacy classification, preserved verbatim.
+     * (A font with more than FC_SPACING_MAX_CLUSTERS distinct advances had >= 3
+     * distinct advances under the old rule too, i.e. PROPORTIONAL.)
+     */
+    if (!overflow) {
+	/* No advances, or every glyph the same width: MONO. */
+	if (total <= 0 || num <= 1)
+	    return FC_SPACING_MONO;
+	/* Exactly two widths in a 2:1 ratio: DUAL. */
+	if (num == 2 &&
+	    fc_approximately_equal (fc_min (value[0], value[1]) * 2,
+	                            fc_max (value[0], value[1])))
+	    return FC_SPACING_DUAL;
+    }
+
+    /*
+     * Stage 2 -- the legacy rule says PROPORTIONAL.  Recover grid fonts, but
+     * only those that monospace their ASCII (genuine Latin monospace); this
+     * leaves uniform full-width scripts, emoji and symbol fonts proportional.
+     */
+    if (overflow || !ascii_monospaced)
+	return FC_SPACING_PROPORTIONAL;
+
+    /*
+     * Try every significant cluster's width as the base cell W, and keep
+     * whichever W places the most advances on an integer grid.  Only real
+     * clusters are candidates: a genuine dual-width font has its base cell
+     * populated (so it is a candidate in its own right), whereas synthesising
+     * finer candidates (e.g. W/2) would let the scattered advances of a
+     * proportional font land on a dense grid by coincidence.
+     */
+    for (i = 0; i < num; i++) {
+	int  w = value[i];
+	long on_grid = 0;
+
+	if (count[i] * FC_SPACING_SIGNIFICANT < total)
+	    continue; /* ignore minor clusters as base-cell candidates */
+	if (w <= 0)
+	    continue;
+	for (k = 0; k < num; k++) {
+	    int mult = (value[k] + w / 2) / w; /* nearest integer multiple */
+	    if (mult >= 1 && fc_approximately_equal (value[k], mult * w))
+		on_grid += count[k];
+	}
+	if (on_grid > best_on_grid) {
+	    best_on_grid = on_grid;
+	    best_w = w;
+	}
+    }
+
+    if (best_w <= 0 ||
+        best_on_grid * 100 < (long)total * FC_SPACING_GRID_PERCENT)
+	return FC_SPACING_PROPORTIONAL;
+
+    /*
+     * On a grid: single-width is mono, dual-width (half/full cell, e.g. CJK)
+     * is dual.  Decide from the most populated cluster.
+     */
+    dom = 0;
+    for (i = 1; i < num; i++)
+	if (count[i] > count[dom])
+	    dom = i;
+    if (fc_approximately_equal (value[dom], 2 * best_w))
+	return FC_SPACING_DUAL;
+    return FC_SPACING_MONO;
+}
+
+/*
+ * For a bitmap (non-scalable) font, select the strike closest to 16px so the
+ * advances we read back are meaningful.
+ */
+static void
+FcFreeTypeSelectSpacingStrike (FT_Face face)
+{
+    FT_Int strike_index = 0, i;
+
+    if ((face->face_flags & FT_FACE_FLAG_SCALABLE) ||
+        face->num_fixed_sizes <= 0 ||
+        !FT_Get_Sfnt_Table (face, ft_sfnt_head))
+	return;
+    /* Select the face closest to 16 pixels tall */
+    for (i = 1; i < face->num_fixed_sizes; i++) {
+	if (abs (face->available_sizes[i].height - 16) <
+	    abs (face->available_sizes[strike_index].height - 16))
+	    strike_index = i;
+    }
+    FT_Select_Size (face, strike_index);
+}
+
 static int
 FcFreeTypeSpacing (FT_Face face)
 {
-    FT_Int       load_flags = FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH | FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING;
-    FT_Pos       advances[3] = { 0 };
-    unsigned int num_advances = 0;
-    int          o;
+    FT_Int            load_flags = FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH | FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING;
+    FcAdvanceClusters clusters = { 0 };
+    int               o;
 
     /* When using scalable fonts, only report those glyphs
      * which can be scaled; otherwise those fonts will
@@ -2422,20 +2620,8 @@ FcFreeTypeSpacing (FT_Face face)
      */
     if (face->face_flags & FT_FACE_FLAG_SCALABLE)
 	load_flags |= FT_LOAD_NO_BITMAP;
-
-    if (!(face->face_flags & FT_FACE_FLAG_SCALABLE) &&
-        face->num_fixed_sizes > 0 &&
-        FT_Get_Sfnt_Table (face, ft_sfnt_head)) {
-	FT_Int strike_index = 0, i;
-	/* Select the face closest to 16 pixels tall */
-	for (i = 1; i < face->num_fixed_sizes; i++) {
-	    if (abs (face->available_sizes[i].height - 16) <
-	        abs (face->available_sizes[strike_index].height - 16))
-		strike_index = i;
-	}
-
-	FT_Select_Size (face, strike_index);
-    }
+    else
+	FcFreeTypeSelectSpacingStrike (face);
 
     for (o = 0; o < NUM_DECODE; o++) {
 	FcChar32 ucs4;
@@ -2445,38 +2631,44 @@ FcFreeTypeSpacing (FT_Face face)
 	    continue;
 
 	ucs4 = FT_Get_First_Char (face, &glyph);
-	while (glyph != 0 && num_advances < 3) {
+	while (glyph != 0 && !clusters.overflow) {
 	    FT_Pos advance = 0;
-	    if (!FT_Get_Advance (face, glyph, load_flags, &advance) && advance) {
-		unsigned int j;
-		for (j = 0; j < num_advances; j++)
-		    if (fc_approximately_equal (advance, advances[j]))
-			break;
-		if (j == num_advances)
-		    advances[num_advances++] = advance;
-	    }
+	    if (!FT_Get_Advance (face, glyph, load_flags, &advance))
+		FcAdvanceClustersAdd (&clusters, ucs4, advance);
 
 	    ucs4 = FT_Get_Next_Char (face, ucs4, &glyph);
 	}
 	break;
     }
 
-    if (num_advances <= 1)
-	return FC_SPACING_MONO;
-    else if (num_advances == 2 &&
-             fc_approximately_equal (fc_min (advances[0], advances[1]) * 2,
-                                     fc_max (advances[0], advances[1])))
-	return FC_SPACING_DUAL;
-    else
-	return FC_SPACING_PROPORTIONAL;
+    return FcSpacingClassify (clusters.value, clusters.count, clusters.num,
+                              clusters.total, clusters.overflow,
+                              FcAdvanceClustersAsciiMono (&clusters));
 }
 
-FcCharSet *
-FcFreeTypeCharSet (FT_Face face, FcBlanks *blanks FC_UNUSED)
+/*
+ * Build the font's charset and, when spacing is non-NULL, its FC_SPACING in a
+ * single cmap traversal.  Folding the advance tally into the charset glyph
+ * loop keeps the heuristic off the startup path's critical cost: it reuses the
+ * traversal FcFreeTypeCharSet already performs rather than walking the cmap a
+ * second time.
+ */
+static FcCharSet *
+FcFreeTypeCharSetAndSpacingInternal (FT_Face face, int *spacing)
 {
-    const FT_Int load_flags = FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH | FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING;
-    FcCharSet   *fcs;
-    int          o;
+    const FT_Int      load_flags = FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH | FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING;
+    const FT_Int      advance_flags = load_flags | FT_LOAD_NO_BITMAP;
+    FcCharSet        *fcs;
+    int               o;
+    FcAdvanceClusters clusters = { 0 };
+    /*
+     * Fold the advance tally into the charset loop only for scalable fonts.
+     * A bitmap font needs a strike selected (FT_Select_Size) to yield
+     * meaningful advances, but that selection also changes what FT_Load_Glyph
+     * returns for the charset's control-char contour check -- so for those we
+     * leave the charset pass untouched and compute spacing separately below.
+     */
+    FcBool fold = spacing && (face->face_flags & FT_FACE_FLAG_SCALABLE);
 
     fcs = FcCharSetCreate();
     if (!fcs)
@@ -2507,6 +2699,12 @@ FcFreeTypeCharSet (FT_Face face, FcBlanks *blanks FC_UNUSED)
 
 	    if (good)
 		FcCharSetAddChar (fcs, ucs4);
+
+	    if (fold && !clusters.overflow) {
+		FT_Pos advance = 0;
+		if (!FT_Get_Advance (face, glyph, advance_flags, &advance))
+		    FcAdvanceClustersAdd (&clusters, ucs4, advance);
+	    }
 
 	    ucs4 = FT_Get_Next_Char (face, ucs4, &glyph);
 	}
@@ -2539,6 +2737,15 @@ FcFreeTypeCharSet (FT_Face face, FcBlanks *blanks FC_UNUSED)
 	break;
     }
 
+    if (fold)
+	*spacing = FcSpacingClassify (clusters.value, clusters.count, clusters.num,
+	                              clusters.total, clusters.overflow,
+	                              FcAdvanceClustersAsciiMono (&clusters));
+    else if (spacing)
+	/* Bitmap font: separate pass so strike selection cannot disturb the
+	 * charset computed above. */
+	*spacing = FcFreeTypeSpacing (face);
+
     return fcs;
 bail:
     FcCharSetDestroy (fcs);
@@ -2546,12 +2753,15 @@ bail:
 }
 
 FcCharSet *
+FcFreeTypeCharSet (FT_Face face, FcBlanks *blanks FC_UNUSED)
+{
+    return FcFreeTypeCharSetAndSpacingInternal (face, NULL);
+}
+
+FcCharSet *
 FcFreeTypeCharSetAndSpacing (FT_Face face, FcBlanks *blanks FC_UNUSED, int *spacing)
 {
-    if (spacing)
-	*spacing = FcFreeTypeSpacing (face);
-
-    return FcFreeTypeCharSet (face, blanks);
+    return FcFreeTypeCharSetAndSpacingInternal (face, spacing);
 }
 
 /* Graphite Rules Table */

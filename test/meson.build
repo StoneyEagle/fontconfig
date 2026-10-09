@@ -88,6 +88,7 @@ endif
 if not get_option('fontations').enabled()
   tests += [
     ['test-foundry.c', {'dependencies': freetype_dep, 'c_args': ['-DFONTFILE="@0@"'.format(join_paths(meson.current_source_dir(), 'no_family_name.ttf'))]}],
+    ['test-spacing.c', {'include_directories': include_directories('../src'), 'dependencies': freetype_dep}],
   ]
 endif
 

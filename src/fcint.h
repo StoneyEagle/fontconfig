@@ -1233,6 +1233,15 @@ FcDirScanConfig (FcFontSet     *set,
 FcPrivate int
 FcFontDebug (void);
 
+/* fcfreetype.c */
+FcPrivate int
+FcSpacingClassify (const int *value,
+                   const int *count,
+                   int        num,
+                   int        total,
+                   FcBool     overflow,
+                   FcBool     ascii_monospaced);
+
 /* fcfs.c */
 
 FcPrivate FcBool
